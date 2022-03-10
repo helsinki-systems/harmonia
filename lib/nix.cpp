@@ -157,12 +157,10 @@ void addTempRoot(const char *storePath) {
 }
 
 const char *getBinDir() {
-  // TODO(conni2461)
   return nix::settings.nixBinDir.c_str();
 }
 
 const char *getStoreDir() {
-  // TODO(conni2461)
   return nix::settings.nixStore.c_str();
 }
 }
