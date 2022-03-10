@@ -3,7 +3,8 @@ stdenv.mkDerivation {
   name = "bc";
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
-    nix
+    unstable.nix
+    unstable.nlohmann_json
     boost
     rustfmt
     cargo-watch
