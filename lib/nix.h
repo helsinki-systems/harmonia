@@ -1,42 +1,144 @@
 #ifndef NIX_H
 #define NIX_H
 
-#include "stdint.h"
-#include "stdbool.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 // TODO(conni2461): Remove
-typedef const char SV;
+typedef void SV;
 
-void init();
-void setVerbosity(int level);
-bool isValidPath(const char *path);
-SV *queryReferences(const char *path);           // TODO(conni2461)
-SV *queryPathHash(const char *path);             // TODO(conni2461)
-SV *queryDeriver(const char *path);              // TODO(conni2461)
-SV *queryPathInfo(const char *path, int base32); // TODO(conni2461)
-SV *queryRawRealisation(const char *outputId);   // TODO(conni2461)
-SV *queryPathFromHashPart(const char *hashPart); // TODO(conni2461)
-SV *computeFSClosure(int flipDirection, int includeOutputs,
-                     ...);                                    // TODO(conni2461)
-SV *topoSortPaths(...);                                       // TODO(conni2461)
-SV *followLinksToStorePath(const char *path);                 // TODO(conni2461)
-void exportPaths(int fd, ...);                                // TODO(conni2461)
-void importPaths(int fd, int dontCheckSigs);                  // TODO(conni2461)
-SV *hashPath(const char *algo, int base32, const char *path); // TODO(conni2461)
-SV *hashFile(const char *algo, int base32, const char *path); // TODO(conni2461)
-SV *hashString(const char *algo, int base32, const char *s);  // TODO(conni2461)
-SV *convertHash(const char *algo, const char *s,
-                int toBase32);                           // TODO(conni2461)
-SV *signString(const char *secretKey_, const char *msg); // TODO(conni2461)
-int checkSignature(SV *publicKey_, SV *sig_,
-                   const char *msg); // TODO(conni2461)
-SV *addToStore(const char *srcPath, int recursive,
-               const char *algo); // TODO(conni2461)
-SV *makeFixedOutputPath(int recursive, const char *algo, const char *hash,
-                        const char *name);   // TODO(conni2461)
-SV *derivationFromPath(const char *drvPath); // TODO(conni2461)
-void addTempRoot(const char *storePath);
-SV *getBinDir();   // TODO(conni2461)
-SV *getStoreDir(); // TODO(conni2461)
+/**
+ *
+ */
+void nix_init();
+
+/**
+ *
+ */
+void nix_set_verbosity(int32_t level);
+
+/**
+ *
+ */
+bool nix_is_valid_path(const char *path);
+
+/**
+ * TODO
+ */
+void nix_query_references(const char *path);
+
+/**
+ *
+ */
+const char *nix_query_path_hash(const char *path);
+
+/**
+ *
+ */
+const char *nix_query_deriver(const char *path);
+
+/**
+ * TODO
+ */
+SV *nix_query_path_info(const char *path, int32_t base32);
+
+/**
+ *
+ */
+const char *nix_query_raw_realisation(const char *output_id);
+
+/**
+ *
+ */
+const char *nix_query_path_from_hash_part(const char *hash_part);
+
+/**
+ * TODO
+ */
+SV *nix_compute_fs_closure(bool flip_direction, bool include_outputs,
+                           const char **paths);
+
+/**
+ * TODO
+ */
+SV *nix_topo_sort_paths(const char **paths);
+
+/**
+ *
+ */
+const char *nix_follow_links_to_store_path(const char *path);
+
+/**
+ *
+ */
+void nix_export_paths(int32_t fd, const char **paths);
+
+/**
+ *
+ */
+void nix_import_paths(int32_t fd, bool dont_check_signs);
+
+/**
+ *
+ */
+const char *nix_hash_path(const char *algo, bool base32, const char *path);
+
+/**
+ *
+ */
+const char *nix_hash_file(const char *algo, bool base32, const char *path);
+
+/**
+ *
+ */
+const char *nix_hash_string(const char *algo, bool base32, const char *s);
+
+/**
+ *
+ */
+const char *nix_convert_hash(const char *algo, const char *s, bool to_base_32);
+
+/**
+ *
+ */
+const char *nix_sign_string(const char *secret_key, const char *msg);
+
+/**
+ *
+ */
+bool nix_check_signature(const char *public_key, const char *sig,
+                         const char *msg);
+
+/**
+ *
+ */
+const char *nix_add_to_store(const char *src_path, int32_t recursive,
+                             const char *algo);
+
+/**
+ *
+ */
+const char *nix_make_fixed_output_path(bool recursive, const char *algo,
+                                       const char *hash, const char *name);
+
+/**
+ * TODO
+ */
+SV *nix_derivation_from_path(const char *drv_path);
+
+/**
+ *
+ */
+void nix_add_temp_root(const char *store_path);
+
+/**
+ *
+ */
+const char *nix_get_bin_dir();
+
+/**
+ *
+ */
+const char *nix_get_store_dir();
 
 #endif // NIX_H

@@ -5,6 +5,7 @@ stdenv.mkDerivation {
   buildInputs = [
     unstable.nix
     unstable.nlohmann_json
+    libsodium
     boost
     rustfmt
     cargo-watch

@@ -8,5 +8,5 @@ fn main() {
         .file("lib/nix.cpp")
         .compile("libnix.a");
     pkg_config::probe_library("nix-store").unwrap();
-    pkg_config::probe_library("nix-store").unwrap();
+    pkg_config::probe_library("libsodium").unwrap();
 }
