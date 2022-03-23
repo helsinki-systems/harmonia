@@ -41,6 +41,8 @@ static const char *str_dup(std::string_view str) {
 }
 
 extern "C" {
+#include "nix.h"
+
 void nix_init() {
   store();
 }
@@ -88,8 +90,30 @@ const char *nix_query_deriver(const char *path) {
   return NULL;
 }
 
-SV *nix_query_path_info(const char *path, int32_t base32) {
-  // TODO(conni2461)
+nix_path_info_s *nix_query_path_info(const char *path, bool base32) {
+  nix_path_info_s *res = (nix_path_info_s *)malloc(sizeof(nix_path_info_s));
+  DEFAULT_TRY_CATCH({
+    auto info = store()->queryPathInfo(store()->parseStorePath(path));
+    if (!info->deriver) {
+      res->drv = NULL;
+    } else {
+      res->drv = str_dup(store()->printStorePath(*info->deriver));
+    }
+    std::string s = info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
+    res->narhash = str_dup(s);
+    res->time = info->registrationTime;
+    res->size = info->narSize;
+    // TODO(conni2461):
+    // AV * refs = newAV();
+    // for (auto & i : info->references)
+    //     av_push(refs, newSVpv(store()->printStorePath(i).c_str(), 0));
+    // XPUSHs(sv_2mortal(newRV((SV *) refs)));
+    // AV * sigs = newAV();
+    // for (auto & i : info->sigs)
+    //     av_push(sigs, newSVpv(i.c_str(), 0));
+    // XPUSHs(sv_2mortal(newRV((SV *) sigs)));
+  })
+  free(res);
   return NULL;
 }
 

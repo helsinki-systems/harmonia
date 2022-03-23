@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 
 // TODO(conni2461): Remove
 typedef void SV;
@@ -37,10 +38,19 @@ const char *nix_query_path_hash(const char *path);
  */
 const char *nix_query_deriver(const char *path);
 
+typedef struct {
+  const char *drv;
+  const char *narhash;
+  time_t time;
+  uint64_t size;
+  const char **refs;
+  const char **sigs;
+} nix_path_info_s;
+
 /**
- * TODO
+ *
  */
-SV *nix_query_path_info(const char *path, int32_t base32);
+nix_path_info_s *nix_query_path_info(const char *path, bool base32);
 
 /**
  *
