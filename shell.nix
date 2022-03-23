@@ -1,15 +1,17 @@
-with import <nixpkgs> { };
+with import <nixpkgs-unstable> { };
 stdenv.mkDerivation {
   name = "bc";
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
-    unstable.nix
-    unstable.nlohmann_json
+    nix
+    nlohmann_json
     libsodium
     boost
     rustfmt
     cargo-watch
     cargo-edit
+    cargo-outdated
+    cargo-audit
     openssl
   ];
 
