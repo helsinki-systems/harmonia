@@ -87,7 +87,7 @@ fn format_narinfo_txt(hash: &str, store_dir: &str) -> (String, (String, String))
     )
 }
 
-async fn index(hash: web::Path<String>) -> Result<HttpResponse, Error> {
+async fn get_narinfo(hash: web::Path<String>) -> Result<HttpResponse, Error> {
     let (hash, store_path) = nixhash(hash.into_inner());
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
@@ -122,7 +122,7 @@ async fn main() -> std::io::Result<()> {
     info!("listening on port 8080");
     HttpServer::new(move || {
         App::new()
-            .route("/{hash}", web::get().to(index))
+            .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })

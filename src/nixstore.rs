@@ -5,7 +5,7 @@ use std::os::raw::{c_char, c_ulong, c_void};
 
 #[repr(C)]
 struct NixStrArray {
-    arr: *const c_char,
+    arr: *const *const c_char,
     size: usize,
 }
 
@@ -74,6 +74,15 @@ fn c_char_to_option_str(c_buf: *const c_char) -> Option<String> {
     Some(c_char_to_str(c_buf))
 }
 
+fn c_string_array_to_str_vec(c_arr: &NixStrArray) -> Vec<String> {
+    let mut res = Vec::with_capacity(c_arr.size);
+    for i in 0..c_arr.size {
+        unsafe { res.push(c_char_to_str(*(c_arr.arr.offset(i as isize)))) };
+    }
+    std::mem::drop(c_arr.arr);
+    res
+}
+
 #[derive(Debug)]
 pub struct PathInfo {
     pub drv: Option<String>,
@@ -115,14 +124,13 @@ pub fn query_path_info<S: Into<String>>(
     let c_path = std::ffi::CString::new(path.into())?;
     unsafe {
         let c_info = nix_query_path_info(c_path.as_ptr(), base32);
-        //TODO(conni2461): Handle unhandled values. We are leaking otherwise
         Ok(PathInfo {
             drv: c_char_to_option_str((*c_info).drv),
             narhash: c_char_to_str((*c_info).narhash),
             time: (*c_info).time,
             size: (*c_info).size,
-            refs: vec![],
-            sigs: vec![],
+            refs: c_string_array_to_str_vec(&(*c_info).refs),
+            sigs: c_string_array_to_str_vec(&(*c_info).sigs),
         })
     }
 }
@@ -144,11 +152,11 @@ pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ff
         //TODO(conni2461): Handle unhandled values. We are leaking otherwise
         Ok(Drv {
             outputs: std::collections::HashMap::new(),
-            input_drvs: vec![],
-            input_srcs: vec![],
+            input_drvs: c_string_array_to_str_vec(&(*c_drv).input_drvs),
+            input_srcs: c_string_array_to_str_vec(&(*c_drv).input_srcs),
             platform: c_char_to_str((*c_drv).platform),
             builder: c_char_to_str((*c_drv).builder),
-            args: vec![],
+            args: c_string_array_to_str_vec(&(*c_drv).args),
             env: std::collections::HashMap::new(),
         })
     }
