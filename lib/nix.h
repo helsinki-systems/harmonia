@@ -8,6 +8,41 @@
 // TODO(conni2461): Remove
 typedef void SV;
 
+typedef struct {
+  const char **arr;
+  size_t size;
+} nix_str_array_t;
+
+typedef struct {
+  const char *lhs;
+  const char *rhs;
+} nix_str_tuple_t;
+
+typedef struct {
+  nix_str_tuple_t **arr;
+  size_t size;
+} nix_str_hash_t;
+
+typedef struct {
+  const char *drv;
+  const char *narhash;
+  time_t time;
+  uint64_t size;
+  nix_str_array_t refs;
+  nix_str_array_t sigs;
+} nix_path_info_t;
+
+typedef struct {
+  nix_str_hash_t outputs;
+  nix_str_array_t input_drvs;
+  nix_str_array_t input_srcs;
+  const char *platform;
+  const char *builder;
+  nix_str_array_t args;
+  nix_str_hash_t env;
+} nix_drv_t;
+
+
 /**
  *
  */
@@ -26,7 +61,7 @@ bool nix_is_valid_path(const char *path);
 /**
  * TODO
  */
-void nix_query_references(const char *path);
+SV* nix_query_references(const char *path);
 
 /**
  *
@@ -38,19 +73,10 @@ const char *nix_query_path_hash(const char *path);
  */
 const char *nix_query_deriver(const char *path);
 
-typedef struct {
-  const char *drv;
-  const char *narhash;
-  time_t time;
-  uint64_t size;
-  const char **refs;
-  const char **sigs;
-} nix_path_info_s;
-
 /**
  *
  */
-nix_path_info_s *nix_query_path_info(const char *path, bool base32);
+const nix_path_info_t *nix_query_path_info(const char *path, bool base32);
 
 /**
  *
@@ -132,9 +158,9 @@ const char *nix_make_fixed_output_path(bool recursive, const char *algo,
                                        const char *hash, const char *name);
 
 /**
- * TODO
+ *
  */
-SV *nix_derivation_from_path(const char *drv_path);
+const nix_drv_t *nix_derivation_from_path(const char *drv_path);
 
 /**
  *

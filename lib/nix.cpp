@@ -43,6 +43,15 @@ static const char *str_dup(std::string_view str) {
 extern "C" {
 #include "nix.h"
 
+static nix_str_array_t init_arr(size_t size) {
+  return (nix_str_array_t){(const char **)malloc(sizeof(char *) * size), size};
+}
+
+static nix_str_hash_t init_hash(size_t size) {
+  return (nix_str_hash_t){
+      (nix_str_tuple_t **)malloc(sizeof(nix_str_tuple_t *) * size), size};
+}
+
 void nix_init() {
   store();
 }
@@ -56,7 +65,7 @@ bool nix_is_valid_path(const char *path) {
   return false;
 }
 
-void nix_query_references(const char *path) {
+SV *nix_query_references(const char *path) {
   DEFAULT_TRY_CATCH({
     std::vector<std::string> ret;
     // TODO(conni2461): RETURN this array ^
@@ -65,6 +74,7 @@ void nix_query_references(const char *path) {
       ret.push_back(store()->printStorePath(store_path).c_str());
     }
   })
+  return NULL;
 }
 
 const char *nix_query_path_hash(const char *path) {
@@ -81,7 +91,8 @@ typedef void SV;
 
 const char *nix_query_deriver(const char *path) {
   DEFAULT_TRY_CATCH({
-    auto info = store()->queryPathInfo(store()->parseStorePath(path));
+    nix::ref<const nix::ValidPathInfo> info =
+        store()->queryPathInfo(store()->parseStorePath(path));
     if (!info->deriver) {
       return NULL;
     }
@@ -90,28 +101,36 @@ const char *nix_query_deriver(const char *path) {
   return NULL;
 }
 
-nix_path_info_s *nix_query_path_info(const char *path, bool base32) {
-  nix_path_info_s *res = (nix_path_info_s *)malloc(sizeof(nix_path_info_s));
+const nix_path_info_t *nix_query_path_info(const char *path, bool base32) {
+  nix_path_info_t *res = (nix_path_info_t *)malloc(sizeof(nix_path_info_t));
   DEFAULT_TRY_CATCH({
-    auto info = store()->queryPathInfo(store()->parseStorePath(path));
+    nix::ref<const nix::ValidPathInfo> info =
+        store()->queryPathInfo(store()->parseStorePath(path));
     if (!info->deriver) {
       res->drv = NULL;
     } else {
       res->drv = str_dup(store()->printStorePath(*info->deriver));
     }
-    std::string s = info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
+    std::string s =
+        info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
     res->narhash = str_dup(s);
     res->time = info->registrationTime;
     res->size = info->narSize;
-    // TODO(conni2461):
-    // AV * refs = newAV();
-    // for (auto & i : info->references)
-    //     av_push(refs, newSVpv(store()->printStorePath(i).c_str(), 0));
-    // XPUSHs(sv_2mortal(newRV((SV *) refs)));
-    // AV * sigs = newAV();
-    // for (auto & i : info->sigs)
-    //     av_push(sigs, newSVpv(i.c_str(), 0));
-    // XPUSHs(sv_2mortal(newRV((SV *) sigs)));
+
+    res->refs = init_arr(info->references.size());
+    size_t idx = 0;
+    for (const nix::StorePath &i : info->references) {
+      res->refs.arr[idx] = str_dup(store()->printStorePath(i));
+      ++idx;
+    }
+
+    res->sigs = init_arr(info->sigs.size());
+    idx = 0;
+    for (const std::string &i : info->sigs) {
+      res->sigs.arr[idx] = str_dup(i);
+      ++idx;
+    }
+    return res;
   })
   free(res);
   return NULL;
@@ -133,6 +152,8 @@ const char *nix_query_path_from_hash_part(const char *hash_part) {
   DEFAULT_TRY_CATCH({
     std::optional<nix::StorePath> path =
         store()->queryPathFromHashPart(hash_part);
+    // TODO(conni2461): Rust code would be easier if this is a nullptr if not
+    // found
     return str_dup(path ? store()->printStorePath(*path) : "");
   })
   return NULL;
@@ -284,8 +305,61 @@ const char *nix_make_fixed_output_path(bool recursive, const char *algo,
   return NULL;
 }
 
-SV *nix_derivation_from_path(const char *drv_path) {
-  // TODO(conni2461)
+const nix_drv_t *nix_derivation_from_path(const char *drv_path) {
+  nix_drv_t *res = (nix_drv_t *)malloc(sizeof(nix_drv_t));
+  size_t idx = 0;
+  try {
+    nix::Derivation drv =
+        store()->derivationFromPath(store()->parseStorePath(drv_path));
+
+    res->outputs = init_hash(drv.outputsAndOptPaths(*store()).size());
+    for (auto &i : drv.outputsAndOptPaths(*store())) {
+      res->outputs.arr[idx] =
+          (nix_str_tuple_t *)malloc(sizeof(nix_str_tuple_t));
+      res->outputs.arr[idx]->lhs = str_dup(i.first);
+      res->outputs.arr[idx]->rhs =
+          !i.second.second ? NULL
+                           : str_dup(store()->printStorePath(*i.second.second));
+      ++idx;
+    }
+
+    res->input_drvs = init_arr(drv.inputDrvs.size());
+    idx = 0;
+    for (auto &i : drv.inputDrvs) {
+      res->input_drvs.arr[idx] = str_dup(store()->printStorePath(i.first));
+      ++idx;
+    }
+
+    res->input_srcs = init_arr(drv.inputSrcs.size());
+    idx = 0;
+    for (auto &i : drv.inputSrcs) {
+      res->input_srcs.arr[idx] = str_dup(store()->printStorePath(i));
+      ++idx;
+    }
+
+    res->platform = str_dup(drv.platform);
+    res->builder = str_dup(drv.builder);
+
+    res->args = init_arr(drv.args.size());
+    idx = 0;
+    for (const std::string &i : drv.args) {
+      res->args.arr[idx] = str_dup(i);
+      ++idx;
+    }
+
+    res->env = init_hash(drv.env.size());
+    idx = 0;
+    for (auto &i : drv.env) {
+      res->env.arr[idx] = (nix_str_tuple_t *)malloc(sizeof(nix_str_tuple_t));
+      res->env.arr[idx]->lhs = str_dup(i.first);
+      res->env.arr[idx]->rhs = str_dup(i.second);
+      ++idx;
+    }
+    return res;
+  } catch (const nix::Error &e) {
+    fprintf(stderr, "%s\n", e.what());
+  }
+  free(res);
   return NULL;
 }
 
