@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
+//TODO(conni2461): FIND A WAY TO COPY LESS LUL
+
+use std::collections::HashMap;
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_ulong, c_void};
+use std::os::raw::{c_char, c_ulong};
 
 #[repr(C)]
 struct NixStrArray {
@@ -17,7 +20,7 @@ struct NixStrTuple {
 
 #[repr(C)]
 struct NixStrHash {
-    arr: *mut NixStrTuple,
+    arr: *const *const NixStrTuple,
     size: usize,
 }
 
@@ -55,15 +58,13 @@ extern "C" {
 
     fn nix_get_bin_dir() -> *const c_char;
     fn nix_get_store_dir() -> *const c_char;
-
-    fn free(ptr: *mut c_void);
 }
 
 fn c_char_to_str(c_buf: *const c_char) -> String {
     let c_str: &CStr = unsafe { CStr::from_ptr(c_buf) };
     let str: &str = c_str.to_str().unwrap();
     let ret = str.to_string();
-    unsafe { free(c_buf as *mut c_void) };
+    std::mem::drop(c_buf);
     ret
 }
 
@@ -80,6 +81,32 @@ fn c_string_array_to_str_vec(c_arr: &NixStrArray) -> Vec<String> {
         unsafe { res.push(c_char_to_str(*(c_arr.arr.offset(i as isize)))) };
     }
     std::mem::drop(c_arr.arr);
+    res
+}
+
+fn c_string_hash_to_str_hashmap_opt(c_hashmap: &NixStrHash) -> HashMap<String, Option<String>> {
+    let mut res = HashMap::with_capacity(c_hashmap.size);
+    for i in 0..c_hashmap.size {
+        unsafe {
+            let tup = *(c_hashmap.arr.offset(i as isize));
+            res.insert(c_char_to_str((*tup).lhs), c_char_to_option_str((*tup).rhs));
+            std::mem::drop(tup);
+        }
+    }
+    std::mem::drop(c_hashmap.arr);
+    res
+}
+
+fn c_string_hash_to_str_hashmap(c_hashmap: &NixStrHash) -> HashMap<String, String> {
+    let mut res = HashMap::with_capacity(c_hashmap.size);
+    for i in 0..c_hashmap.size {
+        unsafe {
+            let tup = *(c_hashmap.arr.offset(i as isize));
+            res.insert(c_char_to_str((*tup).lhs), c_char_to_str((*tup).rhs));
+            std::mem::drop(tup);
+        }
+    }
+    std::mem::drop(c_hashmap.arr);
     res
 }
 
@@ -124,14 +151,16 @@ pub fn query_path_info<S: Into<String>>(
     let c_path = std::ffi::CString::new(path.into())?;
     unsafe {
         let c_info = nix_query_path_info(c_path.as_ptr(), base32);
-        Ok(PathInfo {
+        let res = Ok(PathInfo {
             drv: c_char_to_option_str((*c_info).drv),
             narhash: c_char_to_str((*c_info).narhash),
             time: (*c_info).time,
             size: (*c_info).size,
             refs: c_string_array_to_str_vec(&(*c_info).refs),
             sigs: c_string_array_to_str_vec(&(*c_info).sigs),
-        })
+        });
+        std::mem::drop(c_info);
+        res
     }
 }
 
@@ -149,16 +178,17 @@ pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ff
     let c_path = std::ffi::CString::new(drv_path.into())?;
     unsafe {
         let c_drv = nix_derivation_from_path(c_path.as_ptr());
-        //TODO(conni2461): Handle unhandled values. We are leaking otherwise
-        Ok(Drv {
-            outputs: std::collections::HashMap::new(),
+        let res = Ok(Drv {
+            outputs: c_string_hash_to_str_hashmap_opt(&(*c_drv).outputs),
             input_drvs: c_string_array_to_str_vec(&(*c_drv).input_drvs),
             input_srcs: c_string_array_to_str_vec(&(*c_drv).input_srcs),
             platform: c_char_to_str((*c_drv).platform),
             builder: c_char_to_str((*c_drv).builder),
             args: c_string_array_to_str_vec(&(*c_drv).args),
-            env: std::collections::HashMap::new(),
-        })
+            env: c_string_hash_to_str_hashmap(&(*c_drv).env),
+        });
+        std::mem::drop(c_drv);
+        res
     }
 }
 
