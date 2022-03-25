@@ -107,6 +107,11 @@ const char *nix_follow_links_to_store_path(const char *path);
 /**
  *
  */
+const char* nix_export_path(const char *path, size_t size);
+
+/**
+ *
+ */
 void nix_export_paths(int32_t fd, const char **paths);
 
 /**

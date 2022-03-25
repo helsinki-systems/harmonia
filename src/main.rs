@@ -98,6 +98,22 @@ async fn get_narinfo(hash: web::Path<String>) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().append_header(header).body(narinfo))
 }
 
+async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {
+    let (_, store_path) = nixhash(hash.into_inner());
+    if store_path.is_none() {
+        // TODO(conni2461): handle_miss
+        return Ok(HttpResponse::Ok().body("missed hash"));
+    }
+    let store_path = store_path.unwrap();
+    let path_info = nixstore::query_path_info(&store_path, true).unwrap();
+    let export = nixstore::export_path(&store_path, path_info.size);
+
+    Ok(HttpResponse::Ok()
+        .append_header(("content_length", path_info.size))
+        .append_header(("content_type", "application/x-nix-archive"))
+        .body(export.unwrap()))
+}
+
 async fn version() -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().body("0.1.0"))
 }
@@ -123,6 +139,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
+            .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })

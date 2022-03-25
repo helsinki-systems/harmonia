@@ -196,6 +196,15 @@ const char *nix_follow_links_to_store_path(const char *path) {
   return NULL;
 }
 
+const char *nix_export_path(const char *path, size_t size) {
+  nix::StringSink sink;
+  store()->exportPath(store()->parseStorePath(path), sink);
+  char *ret = (char *)malloc(size + 1);
+  memcpy(ret, sink.s.c_str(), size);
+  ret[size] = '\0';
+  return ret;
+}
+
 void nix_export_paths(int32_t fd, const char **paths) {
   DEFAULT_TRY_CATCH({
     nix::StorePathSet path_set;

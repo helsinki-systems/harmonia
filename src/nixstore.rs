@@ -2,9 +2,11 @@
 
 //TODO(conni2461): FIND A WAY TO COPY LESS LUL
 
+use log::info;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_ulong};
+use std::slice;
 
 #[repr(C)]
 struct NixStrArray {
@@ -49,6 +51,8 @@ extern "C" {
     fn nix_init();
     fn nix_set_verbosity(level: i32);
     fn nix_is_valid_path(path: *const c_char) -> bool;
+
+    fn nix_export_path(path: *const c_char, size: usize) -> *const c_char;
 
     fn nix_query_path_info(path: *const c_char, base32: bool) -> *const NixPathInfo;
 
@@ -190,6 +194,18 @@ pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ff
         std::mem::drop(c_drv);
         res
     }
+}
+
+pub fn export_path<'a, S: Into<String>>(path: S, size: usize) -> Option<&'a [u8]> {
+    let c_path = std::ffi::CString::new(path.into()).unwrap();
+    let c_res = unsafe { nix_export_path(c_path.as_ptr(), size) };
+    if c_res.is_null() {
+        return None;
+    }
+
+    let res = unsafe { Some(slice::from_raw_parts(c_res as *const u8, size)) };
+    std::mem::drop(c_res);
+    res
 }
 
 pub fn get_bin_dir() -> Option<String> {
