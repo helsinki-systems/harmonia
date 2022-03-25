@@ -1,9 +1,9 @@
 mod nixstore;
 
-use std::path::Path;
-
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
 use log::info;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -33,43 +33,92 @@ fn nixhash(hash: String) -> (String, Option<String>) {
     (hash, store_path)
 }
 
-fn format_narinfo_txt(hash: &str, store_dir: &str) -> (String, (String, String)) {
-    let path_info = nixstore::query_path_info(store_dir, true).unwrap();
+#[derive(Debug, Serialize)]
+struct NarInfo {
+    store_path: String,
+    url: String,
+    compression: String,
+    nar_hash: String,
+    nar_size: usize,
+    references: Option<Vec<String>>,
+    deriver: Option<String>,
+    system: Option<String>,
+    sig: Option<String>,
+}
 
+fn format_narinfo_txt(narinfo: &NarInfo) -> String {
     let mut res = vec![
-        format!("StorePath: {}", store_dir),
-        format!("URL: nar/{}.nar", hash),
-        "Compression: none".into(),
-        format!("NarHash: {}", path_info.narhash),
-        format!("NarSize: {}", path_info.size),
+        format!("StorePath: {}", narinfo.store_path),
+        format!("URL: {}", narinfo.url),
+        format!("Compression: {}", narinfo.compression),
+        format!("NarHash: {}", narinfo.nar_hash),
+        format!("NarSize: {}", narinfo.nar_size),
     ];
 
+    if let Some(refs) = &narinfo.references {
+        res.push(format!("References: {}", refs.join(" ")));
+    }
+
+    if let Some(drv) = &narinfo.deriver {
+        res.push(format!("Deriver: {}", drv));
+    }
+
+    if let Some(sys) = &narinfo.system {
+        res.push(format!("System: {}", sys));
+    }
+
+    if let Some(sig) = &narinfo.sig {
+        res.push(format!("Sig: {}", sig));
+    }
+
+    res.push("".into());
+    res.join("\n")
+}
+
+fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
+    let path_info = nixstore::query_path_info(store_dir, true).unwrap();
+    let mut res = NarInfo {
+        store_path: store_dir.into(),
+        url: format!("nar/{}.nar", hash),
+        compression: "none".into(),
+        nar_hash: path_info.narhash,
+        nar_size: path_info.size,
+        references: None,
+        deriver: None,
+        system: None,
+        sig: None,
+    };
+
     if path_info.refs.len() > 0 {
-        res.push(format!(
-            "References: {}",
+        res.references = Some(
             path_info
                 .refs
                 .into_iter()
-                .map(|r| Path::new(&r)
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_owned())
-                .collect::<Vec<String>>()
-                .join(" ")
-        ));
+                .map(|r| {
+                    Path::new(&r)
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<String>>(),
+        );
     }
 
     if let Some(drv) = path_info.drv {
-        res.push(format!(
-            "Deriver: {}",
-            Path::new(&drv).file_name().unwrap().to_str().unwrap()
-        ));
+        res.deriver = Some(
+            Path::new(&drv)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .into(),
+        );
 
         if nixstore::is_valid_path(&drv).unwrap() {
             let drvpath = nixstore::derivation_from_path(&drv).unwrap();
-            res.push(format!("System: {}", drvpath.platform));
+            res.system = Some(drvpath.platform);
         }
     }
 
@@ -79,23 +128,35 @@ fn format_narinfo_txt(hash: &str, store_dir: &str) -> (String, (String, String))
     //   my $sig = signString($sign_sk, $fp);
     //   push @res, "Sig: $sig";
     // }
-
-    res.push("".into());
-    (
-        res.join("\n"),
-        ("Nix-Link".into(), format!("/nar/{}.nar", path_info.narhash)),
-    )
+    res
 }
 
-async fn get_narinfo(hash: web::Path<String>) -> Result<HttpResponse, Error> {
+#[derive(Debug, Deserialize)]
+pub struct Param {
+    json: Option<String>,
+}
+
+async fn get_narinfo(
+    hash: web::Path<String>,
+    param: web::Query<Param>,
+) -> Result<HttpResponse, Error> {
     let (hash, store_path) = nixhash(hash.into_inner());
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
         return Ok(HttpResponse::Ok().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let (narinfo, header) = format_narinfo_txt(&hash, &store_path);
-    Ok(HttpResponse::Ok().append_header(header).body(narinfo))
+    if param.json.is_some() {
+        let narinfo = format_narinfo_json(&hash, &store_path);
+        Ok(HttpResponse::Ok().json(narinfo))
+    } else {
+        let narinfo = format_narinfo_json(&hash, &store_path);
+        let res = format_narinfo_txt(&narinfo);
+        Ok(HttpResponse::Ok()
+            .append_header(("content_length", res.len()))
+            .append_header(("Nix-Link", format!("/nar/{}.nar", narinfo.nar_hash)))
+            .body(res))
+    }
 }
 
 async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {

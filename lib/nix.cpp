@@ -197,7 +197,7 @@ const char *nix_follow_links_to_store_path(const char *path) {
 }
 
 const char *nix_export_path(const char *path, size_t size) {
-  nix::StringSink sink;
+  nix::StringSink sink(size);
   store()->exportPath(store()->parseStorePath(path), sink);
   char *ret = (char *)malloc(size + 1);
   memcpy(ret, sink.s.c_str(), size);
