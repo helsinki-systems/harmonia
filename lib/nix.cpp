@@ -15,6 +15,8 @@
 #include <string.h>
 
 // This is illegal but i dont care
+// TODO(conni2461): In some functions we need to free stuff in the catch block!
+// We don't do that yet so false input might leak memory
 #define DEFAULT_TRY_CATCH(block)                                               \
   try {                                                                        \
     block                                                                      \
@@ -62,16 +64,18 @@ bool nix_is_valid_path(const char *path) {
   return false;
 }
 
-SV *nix_query_references(const char *path) {
+nix_str_array_t nix_query_references(const char *path) {
   DEFAULT_TRY_CATCH({
-    std::vector<std::string> ret;
-    // TODO(conni2461): RETURN this array ^
-    for (const nix::StorePath &store_path :
-         store()->queryPathInfo(store()->parseStorePath(path))->references) {
-      ret.push_back(store()->printStorePath(store_path).c_str());
+    auto refs =
+        store()->queryPathInfo(store()->parseStorePath(path))->references;
+    nix_str_array_t ret = init_arr(refs.size());
+    size_t idx = 0;
+    for (const nix::StorePath &store_path : refs) {
+      ret.arr[idx] = str_dup(store()->printStorePath(store_path));
     }
+    return ret;
   })
-  return NULL;
+  return nix_str_array_t{NULL, 0};
 }
 
 const char *nix_query_path_hash(const char *path) {
@@ -155,9 +159,9 @@ const char *nix_query_path_from_hash_part(const char *hash_part) {
   DEFAULT_TRY_CATCH({
     std::optional<nix::StorePath> path =
         store()->queryPathFromHashPart(hash_part);
-    // TODO(conni2461): Rust code would be easier if this is a nullptr if not
-    // found
-    return str_dup(path ? store()->printStorePath(*path) : "");
+    if (path) {
+      return str_dup(store()->printStorePath(*path));
+    }
   })
   return NULL;
 }

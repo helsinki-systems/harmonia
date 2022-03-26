@@ -82,6 +82,48 @@ fn format_narinfo_txt(narinfo: &NarInfo) -> String {
     res.join("\n")
 }
 
+fn fingerprint_path(
+    store_path: &str,
+    nar_hash: &str,
+    nar_size: &str,
+    refs: &[&str],
+) -> Option<String> {
+    let root_store_dir = nixstore::get_store_dir().unwrap();
+    if store_path[0..root_store_dir.len()] != root_store_dir {
+        return None;
+    }
+    if &nar_hash[0..7] != "sha256:" {
+        return None;
+    }
+
+    let mut nar_hash = nar_hash.to_owned();
+    if nar_hash.len() == 71 {
+        let con = nixstore::convert_hash("sha256", &nar_hash[7..], true);
+        if con.is_none() {
+            return None;
+        }
+        nar_hash = format!("sha256:{}", con.unwrap());
+    }
+
+    if nar_hash.len() != 59 {
+        return None;
+    }
+
+    for r in refs {
+        if r[0..root_store_dir.len()] != root_store_dir {
+            return None;
+        }
+    }
+
+    Some(format!(
+        "1;{};{};{};{}",
+        store_path,
+        nar_hash,
+        nar_size,
+        refs.join(",")
+    ))
+}
+
 fn query_narinfo(hash: &str, store_dir: &str) -> NarInfo {
     let path_info = nixstore::query_path_info(store_dir, true).unwrap();
     let mut res = NarInfo {

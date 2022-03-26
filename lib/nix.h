@@ -54,9 +54,9 @@ void nix_set_verbosity(int32_t level);
 bool nix_is_valid_path(const char *path);
 
 /**
- * TODO
+ *
  */
-SV* nix_query_references(const char *path);
+nix_str_array_t nix_query_references(const char *path);
 
 /**
  *

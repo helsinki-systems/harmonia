@@ -56,6 +56,9 @@ extern "C" {
 
     fn nix_query_path_from_hash_part(hash_part: *const c_char) -> *const c_char;
 
+    fn nix_convert_hash(algo: *const c_char, s: *const c_char, to_base_32: bool) -> *const c_char;
+    fn nix_sign_string(secret_key: *const c_char, msg: *const c_char) -> *const c_char;
+
     fn nix_derivation_from_path(drv_path: *const c_char) -> *const NixDrv;
 
     fn nix_get_bin_dir() -> *const c_char;
@@ -168,12 +171,19 @@ pub fn query_path_info<S: Into<String>>(
 
 pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
     let c_hash_part = std::ffi::CString::new(hash_part).unwrap();
-    let res = c_char_to_str(unsafe { nix_query_path_from_hash_part(c_hash_part.as_ptr()) });
-    if res.is_empty() {
-        None
-    } else {
-        Some(res)
-    }
+    c_char_to_option_str(unsafe { nix_query_path_from_hash_part(c_hash_part.as_ptr()) })
+}
+
+pub fn convert_hash(algo: &str, s: &str, to_base_32: bool) -> Option<String> {
+    let c_algo = std::ffi::CString::new(algo).unwrap();
+    let c_s = std::ffi::CString::new(s).unwrap();
+    c_char_to_option_str(unsafe { nix_convert_hash(c_algo.as_ptr(), c_s.as_ptr(), to_base_32) })
+}
+
+pub fn sign_string(secret_key: &str, msg: &str) -> Option<String> {
+    let c_secret_key = std::ffi::CString::new(secret_key).unwrap();
+    let c_msg = std::ffi::CString::new(msg).unwrap();
+    c_char_to_option_str(unsafe { nix_sign_string(c_secret_key.as_ptr(), c_msg.as_ptr()) })
 }
 
 pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ffi::NulError> {
