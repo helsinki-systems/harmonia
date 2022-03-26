@@ -16,6 +16,7 @@ use std::path::Path;
 // - index_page (index page enabled by default)
 // - priority 30
 // - upstream (no default upstream)
+// - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
 const PRIORITY: u32 = 30;
 
 // http types:
@@ -50,6 +51,8 @@ fn format_narinfo_txt(narinfo: &NarInfo) -> String {
         format!("StorePath: {}", narinfo.store_path),
         format!("URL: {}", narinfo.url),
         format!("Compression: {}", narinfo.compression),
+        format!("FileHash: {}", narinfo.nar_hash),
+        format!("FileSize: {}", narinfo.nar_size),
         format!("NarHash: {}", narinfo.nar_hash),
         format!("NarSize: {}", narinfo.nar_size),
     ];
