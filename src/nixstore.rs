@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_ulong, c_void};
-use std::slice;
 
 #[repr(C)]
 struct NixStrArray {
@@ -51,7 +50,7 @@ extern "C" {
     fn nix_set_verbosity(level: i32);
     fn nix_is_valid_path(path: *const c_char) -> bool;
 
-    fn nix_export_path(path: *const c_char, size: usize) -> *const c_char;
+    fn nix_export_path(path: *const c_char, buf: *mut c_char, size: usize);
 
     fn nix_query_path_info(path: *const c_char, base32: bool) -> *const NixPathInfo;
 
@@ -197,16 +196,16 @@ pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ff
     }
 }
 
-pub fn export_path<'a, S: Into<String>>(path: S, size: usize) -> Option<&'a [u8]> {
-    let c_path = std::ffi::CString::new(path.into()).unwrap();
-    let c_res = unsafe { nix_export_path(c_path.as_ptr(), size) };
-    if c_res.is_null() {
+pub fn export_path<S: Into<String>>(path: S, size: usize) -> Option<Vec<u8>> {
+    let c_path = std::ffi::CString::new(path.into());
+    if c_path.is_err() {
         return None;
     }
+    let c_path = c_path.unwrap();
 
-    let res = unsafe { Some(slice::from_raw_parts(c_res as *const u8, size)) };
-    unsafe { free(c_res as *mut _) };
-    res
+    let mut res: Vec<u8> = vec![0; size];
+    unsafe { nix_export_path(c_path.as_ptr(), res.as_mut_ptr() as *mut i8, size) };
+    Some(res)
 }
 
 pub fn get_bin_dir() -> Option<String> {

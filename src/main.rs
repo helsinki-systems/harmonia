@@ -167,12 +167,12 @@ async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {
     }
     let store_path = store_path.unwrap();
     let path_info = nixstore::query_path_info(&store_path, true).unwrap();
-    let export = nixstore::export_path(&store_path, path_info.size);
+    let export_new = nixstore::export_path(&store_path, path_info.size).unwrap();
 
     Ok(HttpResponse::Ok()
         .append_header(("content_length", path_info.size))
         .append_header(("content_type", "application/x-nix-archive"))
-        .body(export.unwrap()))
+        .body(export_new))
 }
 
 async fn version() -> Result<HttpResponse, Error> {
