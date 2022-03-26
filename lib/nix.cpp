@@ -192,12 +192,25 @@ const char *nix_follow_links_to_store_path(const char *path) {
   return NULL;
 }
 
+struct CBufSink : nix::Sink {
+  char *buf;
+  size_t s;
+  size_t h;
+  CBufSink(char *buf, size_t s) : buf(buf), s(s), h(0) {
+  }
+  void operator()(std::string_view data) override {
+    size_t add = data.size();
+    if ((h + add) > s) {
+      add -= ((h + add) - s);
+    }
+    memcpy(buf + h, data.data(), add);
+    h += add;
+  }
+};
+
 void nix_export_path(const char *path, char *buffer, size_t size) {
-  // TODO(conni2461): Write a custom sink that writes in buffer rather than in
-  // the sink first. That would remove the need for memcpy
-  nix::StringSink sink;
+  CBufSink sink(buffer, size);
   store()->exportPath(store()->parseStorePath(path), sink);
-  memcpy(buffer, sink.s.c_str(), size);
 }
 
 void nix_export_paths(int32_t fd, const char **paths) {
