@@ -30,6 +30,7 @@ typedef struct {
   uint64_t size;
   nix_str_array_t refs;
   nix_str_array_t sigs;
+  const char *ca;
 } nix_path_info_t;
 
 typedef struct {

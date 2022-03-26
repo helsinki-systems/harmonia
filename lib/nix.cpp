@@ -3,6 +3,7 @@
 #include <nix/derivations.hh>
 #include <nix/globals.hh>
 #include <nix/store-api.hh>
+#include <nix/content-address.hh>
 #include <nix/util.hh>
 #include <nix/crypto.hh>
 
@@ -125,6 +126,12 @@ const nix_path_info_t *nix_query_path_info(const char *path, bool base32) {
     for (const std::string &i : info->sigs) {
       res->sigs.arr[idx] = str_dup(i);
       ++idx;
+    }
+
+    if (info->ca) {
+      res->ca = str_dup(nix::renderContentAddress(*info->ca));
+    } else {
+      res->ca = NULL;
     }
     return res;
   })

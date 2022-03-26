@@ -44,6 +44,7 @@ struct NarInfo {
     deriver: Option<String>,
     system: Option<String>,
     sig: Option<String>,
+    ca: Option<String>,
 }
 
 fn format_narinfo_txt(narinfo: &NarInfo) -> String {
@@ -73,11 +74,15 @@ fn format_narinfo_txt(narinfo: &NarInfo) -> String {
         res.push(format!("Sig: {}", sig));
     }
 
+    if let Some(ca) = &narinfo.ca {
+        res.push(format!("CA: {}", ca));
+    }
+
     res.push("".into());
     res.join("\n")
 }
 
-fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
+fn query_narinfo(hash: &str, store_dir: &str) -> NarInfo {
     let path_info = nixstore::query_path_info(store_dir, true).unwrap();
     let mut res = NarInfo {
         store_path: store_dir.into(),
@@ -89,6 +94,7 @@ fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
         deriver: None,
         system: None,
         sig: None,
+        ca: None,
     };
 
     if !path_info.refs.is_empty() {
@@ -122,6 +128,10 @@ fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
         }
     }
 
+    if let Some(ca) = path_info.ca {
+        res.ca = Some(ca);
+    }
+
     //TODO(conni2461): sign_sk
     // if (defined $sign_sk) {
     //   my $fp  = fingerprintPath($storePath, $narhash, $size, $refs);
@@ -147,7 +157,7 @@ async fn get_narinfo(
         return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let narinfo = format_narinfo_json(&hash, &store_path);
+    let narinfo = query_narinfo(&hash, &store_path);
     if param.json.is_some() {
         Ok(HttpResponse::Ok().json(narinfo))
     } else {
@@ -181,8 +191,8 @@ async fn version() -> Result<HttpResponse, Error> {
 
 async fn cache_info() -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok()
-       .append_header(("content-type", "text/x-nix-cache-info"))
-       .body(
+        .append_header(("content-type", "text/x-nix-cache-info"))
+        .body(
             vec![
                 format!("StoreDir: {}", nixstore::get_store_dir().unwrap()),
                 "WantMassQuery: 1".to_owned(),
@@ -190,8 +200,7 @@ async fn cache_info() -> Result<HttpResponse, Error> {
                 "".to_owned(),
             ]
             .join("\n"),
-        )
-    )
+        ))
 }
 
 #[actix_web::main]

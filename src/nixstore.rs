@@ -32,6 +32,7 @@ struct NixPathInfo {
     size: usize,
     refs: NixStrArray,
     sigs: NixStrArray,
+    ca: *const c_char,
 }
 
 #[repr(C)]
@@ -121,6 +122,7 @@ pub struct PathInfo {
     pub size: usize,
     pub refs: Vec<String>,
     pub sigs: Vec<String>,
+    pub ca: Option<String>,
 }
 
 #[derive(Debug)]
@@ -157,6 +159,7 @@ pub fn query_path_info<S: Into<String>>(
             size: (*c_info).size,
             refs: c_string_array_to_str_vec(&(*c_info).refs),
             sigs: c_string_array_to_str_vec(&(*c_info).sigs),
+            ca: c_char_to_option_str((*c_info).ca),
         });
         free(c_info as *mut _);
         res
