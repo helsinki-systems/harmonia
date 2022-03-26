@@ -143,17 +143,16 @@ async fn get_narinfo(
     let (hash, store_path) = nixhash(hash.into_inner());
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
-        return Ok(HttpResponse::Ok().body("missed hash"));
+        return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
+    let narinfo = format_narinfo_json(&hash, &store_path);
     if param.json.is_some() {
-        let narinfo = format_narinfo_json(&hash, &store_path);
         Ok(HttpResponse::Ok().json(narinfo))
     } else {
-        let narinfo = format_narinfo_json(&hash, &store_path);
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
-            .append_header(("content_length", res.len()))
+            .append_header(("content-type", "text/x-nix-narinfo"))
             .append_header(("Nix-Link", format!("/nar/{}.nar", narinfo.nar_hash)))
             .body(res))
     }
@@ -163,15 +162,14 @@ async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {
     let (_, store_path) = nixhash(hash.into_inner());
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
-        return Ok(HttpResponse::Ok().body("missed hash"));
+        return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
     let path_info = nixstore::query_path_info(&store_path, true).unwrap();
     let export_new = nixstore::export_path(&store_path, path_info.size).unwrap();
 
     Ok(HttpResponse::Ok()
-        .append_header(("content_length", path_info.size))
-        .append_header(("content_type", "application/x-nix-archive"))
+        .append_header(("content-type", "application/x-nix-archive"))
         .body(export_new))
 }
 
@@ -180,15 +178,18 @@ async fn version() -> Result<HttpResponse, Error> {
 }
 
 async fn cache_info() -> Result<HttpResponse, Error> {
-    Ok(HttpResponse::Ok().body(
-        vec![
-            format!("StoreDir: {}", nixstore::get_store_dir().unwrap()),
-            "WantMassQuery: 1".to_owned(),
-            format!("Priority: {}", PRIORITY),
-            "".to_owned(),
-        ]
-        .join("\n"),
-    ))
+    Ok(HttpResponse::Ok()
+       .append_header(("content-type", "text/x-nix-cache-info"))
+       .body(
+            vec![
+                format!("StoreDir: {}", nixstore::get_store_dir().unwrap()),
+                "WantMassQuery: 1".to_owned(),
+                format!("Priority: {}", PRIORITY),
+                "".to_owned(),
+            ]
+            .join("\n"),
+        )
+    )
 }
 
 #[actix_web::main]
