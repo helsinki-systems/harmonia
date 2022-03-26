@@ -23,7 +23,7 @@ const PRIORITY: u32 = 30;
 
 // TODO(conni2461):
 // always_use_upstream logic
-const ALWAYS_USE_UPSTREAM: bool = false;
+// const ALWAYS_USE_UPSTREAM: bool = false;
 
 fn nixhash(hash: String) -> (String, Option<String>) {
     if hash.len() != 32 {
@@ -89,7 +89,7 @@ fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
         sig: None,
     };
 
-    if path_info.refs.len() > 0 {
+    if !path_info.refs.is_empty() {
         res.references = Some(
             path_info
                 .refs

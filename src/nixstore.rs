@@ -2,10 +2,9 @@
 
 //TODO(conni2461): FIND A WAY TO COPY LESS LUL
 
-use log::info;
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_ulong};
+use std::os::raw::{c_char, c_ulong, c_void};
 use std::slice;
 
 #[repr(C)]
@@ -62,13 +61,15 @@ extern "C" {
 
     fn nix_get_bin_dir() -> *const c_char;
     fn nix_get_store_dir() -> *const c_char;
+
+    fn free(p: *mut c_void);
 }
 
 fn c_char_to_str(c_buf: *const c_char) -> String {
     let c_str: &CStr = unsafe { CStr::from_ptr(c_buf) };
     let str: &str = c_str.to_str().unwrap();
     let ret = str.to_string();
-    std::mem::drop(c_buf);
+    unsafe { free(c_buf as *mut _) };
     ret
 }
 
@@ -82,9 +83,9 @@ fn c_char_to_option_str(c_buf: *const c_char) -> Option<String> {
 fn c_string_array_to_str_vec(c_arr: &NixStrArray) -> Vec<String> {
     let mut res = Vec::with_capacity(c_arr.size);
     for i in 0..c_arr.size {
-        unsafe { res.push(c_char_to_str(*(c_arr.arr.offset(i as isize)))) };
+        unsafe { res.push(c_char_to_str(*(c_arr.arr.add(i)))) };
     }
-    std::mem::drop(c_arr.arr);
+    unsafe { free(c_arr.arr as *mut _) };
     res
 }
 
@@ -92,12 +93,12 @@ fn c_string_hash_to_str_hashmap_opt(c_hashmap: &NixStrHash) -> HashMap<String, O
     let mut res = HashMap::with_capacity(c_hashmap.size);
     for i in 0..c_hashmap.size {
         unsafe {
-            let tup = *(c_hashmap.arr.offset(i as isize));
+            let tup = *(c_hashmap.arr.add(i));
             res.insert(c_char_to_str((*tup).lhs), c_char_to_option_str((*tup).rhs));
-            std::mem::drop(tup);
+            free(tup as *mut _);
         }
     }
-    std::mem::drop(c_hashmap.arr);
+    unsafe { free(c_hashmap.arr as *mut _) };
     res
 }
 
@@ -105,12 +106,12 @@ fn c_string_hash_to_str_hashmap(c_hashmap: &NixStrHash) -> HashMap<String, Strin
     let mut res = HashMap::with_capacity(c_hashmap.size);
     for i in 0..c_hashmap.size {
         unsafe {
-            let tup = *(c_hashmap.arr.offset(i as isize));
+            let tup = *(c_hashmap.arr.add(i));
             res.insert(c_char_to_str((*tup).lhs), c_char_to_str((*tup).rhs));
-            std::mem::drop(tup);
+            free(tup as *mut _);
         }
     }
-    std::mem::drop(c_hashmap.arr);
+    unsafe { free(c_hashmap.arr as *mut _) };
     res
 }
 
@@ -163,7 +164,7 @@ pub fn query_path_info<S: Into<String>>(
             refs: c_string_array_to_str_vec(&(*c_info).refs),
             sigs: c_string_array_to_str_vec(&(*c_info).sigs),
         });
-        std::mem::drop(c_info);
+        free(c_info as *mut _);
         res
     }
 }
@@ -191,7 +192,7 @@ pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ff
             args: c_string_array_to_str_vec(&(*c_drv).args),
             env: c_string_hash_to_str_hashmap(&(*c_drv).env),
         });
-        std::mem::drop(c_drv);
+        free(c_drv as *mut _);
         res
     }
 }
@@ -204,7 +205,7 @@ pub fn export_path<'a, S: Into<String>>(path: S, size: usize) -> Option<&'a [u8]
     }
 
     let res = unsafe { Some(slice::from_raw_parts(c_res as *const u8, size)) };
-    std::mem::drop(c_res);
+    unsafe { free(c_res as *mut _) };
     res
 }
 

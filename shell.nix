@@ -8,6 +8,7 @@ stdenv.mkDerivation {
     libsodium
     boost
     rustfmt
+    clippy
     cargo-watch
     cargo-edit
     cargo-outdated
