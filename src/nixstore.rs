@@ -46,7 +46,6 @@ struct NixDrv {
 }
 
 extern "C" {
-    fn nix_init();
     fn nix_set_verbosity(level: i32);
     fn nix_is_valid_path(path: *const c_char) -> bool;
 

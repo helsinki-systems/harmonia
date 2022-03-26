@@ -42,12 +42,6 @@ typedef struct {
   nix_str_hash_t env;
 } nix_drv_t;
 
-
-/**
- *
- */
-void nix_init();
-
 /**
  *
  */

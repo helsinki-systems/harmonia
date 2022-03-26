@@ -52,10 +52,6 @@ static nix_str_hash_t init_hash(size_t size) {
       (nix_str_tuple_t **)malloc(sizeof(nix_str_tuple_t *) * size), size};
 }
 
-void nix_init() {
-  store();
-}
-
 void nix_set_verbosity(int32_t level) {
   nix::verbosity = (nix::Verbosity)level;
 }
