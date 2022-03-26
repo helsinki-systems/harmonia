@@ -135,16 +135,12 @@ pub struct Drv {
     pub env: std::collections::HashMap<String, String>,
 }
 
-pub fn init() {
-    unsafe { nix_init() }
-}
-
 pub fn set_verbosity(level: i32) {
     unsafe { nix_set_verbosity(level) }
 }
 
-pub fn is_valid_path<S: Into<String>>(path: S) -> Result<bool, std::ffi::NulError> {
-    let c_path = std::ffi::CString::new(path.into())?;
+pub fn is_valid_path(path: &str) -> Result<bool, std::ffi::NulError> {
+    let c_path = std::ffi::CString::new(path)?;
     unsafe { Ok(nix_is_valid_path(c_path.as_ptr())) }
 }
 
@@ -168,8 +164,8 @@ pub fn query_path_info<S: Into<String>>(
     }
 }
 
-pub fn query_path_from_hash_part<S: Into<String>>(hash_part: S) -> Option<String> {
-    let c_hash_part = std::ffi::CString::new(hash_part.into()).unwrap();
+pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
+    let c_hash_part = std::ffi::CString::new(hash_part).unwrap();
     let res = c_char_to_str(unsafe { nix_query_path_from_hash_part(c_hash_part.as_ptr()) });
     if res.is_empty() {
         None

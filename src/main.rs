@@ -25,12 +25,11 @@ const PRIORITY: u32 = 30;
 // always_use_upstream logic
 // const ALWAYS_USE_UPSTREAM: bool = false;
 
-fn nixhash(hash: String) -> (String, Option<String>) {
+fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
-        return (hash, None);
+        return None;
     }
-    let store_path = nixstore::query_path_from_hash_part(&hash);
-    (hash, store_path)
+    nixstore::query_path_from_hash_part(&hash)
 }
 
 #[derive(Debug, Serialize)]
@@ -140,7 +139,8 @@ async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
 ) -> Result<HttpResponse, Error> {
-    let (hash, store_path) = nixhash(hash.into_inner());
+    let hash = hash.into_inner();
+    let store_path = nixhash(&hash);
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
         return Ok(HttpResponse::NotFound().body("missed hash"));
@@ -159,7 +159,8 @@ async fn get_narinfo(
 }
 
 async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {
-    let (_, store_path) = nixhash(hash.into_inner());
+    let hash = hash.into_inner();
+    let store_path = nixhash(&hash);
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
         return Ok(HttpResponse::NotFound().body("missed hash"));
