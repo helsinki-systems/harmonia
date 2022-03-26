@@ -39,7 +39,7 @@ struct NarInfo {
     compression: String,
     nar_hash: String,
     nar_size: usize,
-    references: Option<Vec<String>>,
+    references: Vec<String>,
     deriver: Option<String>,
     system: Option<String>,
     sig: Option<String>,
@@ -54,8 +54,8 @@ fn format_narinfo_txt(narinfo: &NarInfo) -> String {
         format!("NarSize: {}", narinfo.nar_size),
     ];
 
-    if let Some(refs) = &narinfo.references {
-        res.push(format!("References: {}", refs.join(" ")));
+    if !narinfo.references.is_empty() {
+        res.push(format!("References: {}", &narinfo.references.join(" ")));
     }
 
     if let Some(drv) = &narinfo.deriver {
@@ -82,27 +82,25 @@ fn format_narinfo_json(hash: &str, store_dir: &str) -> NarInfo {
         compression: "none".into(),
         nar_hash: path_info.narhash,
         nar_size: path_info.size,
-        references: None,
+        references: Vec::<String>::new(),
         deriver: None,
         system: None,
         sig: None,
     };
 
     if !path_info.refs.is_empty() {
-        res.references = Some(
-            path_info
-                .refs
-                .into_iter()
-                .map(|r| {
-                    Path::new(&r)
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .to_owned()
-                })
-                .collect::<Vec<String>>(),
-        );
+        res.references = path_info
+            .refs
+            .into_iter()
+            .map(|r| {
+                Path::new(&r)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<String>>();
     }
 
     if let Some(drv) = path_info.drv {
