@@ -1,31 +1,19 @@
 mod nixstore;
 
-use actix_web::{web, App, Error, HttpResponse, HttpServer};
+use actix_web::{web, App, HttpResponse, HttpServer};
+use config::Config;
 use log::info;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::sync::Mutex;
 use std::{collections::HashMap, path::Path};
 
 // TODO(conni2461): conf file
 // - users to restrict access
 // - signing
-// - listen, array multiple addresses
-// - proxy
-// - workers
-// - clients?
-// - status (no status page by default)
-// - index_page (index page enabled by default)
-// - priority 30
-// - upstream (no default upstream)
+
+// TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
-const PRIORITY: u32 = 30;
-
-// http types:
-// - narinfo -> 'text/x-nix-narinfo'
-
-// TODO(conni2461):
-// always_use_upstream logic
-// const ALWAYS_USE_UPSTREAM: bool = false;
 
 fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
@@ -88,46 +76,53 @@ fn fingerprint_path(
     nar_hash: &str,
     nar_size: &str,
     refs: &[&str],
-) -> Option<String> {
-    let root_store_dir = nixstore::get_store_dir().unwrap();
+) -> Result<Option<String>, Box<dyn Error>> {
+    let root_store_dir = nixstore::get_store_dir().ok_or("could not get nixstore dir")?;
     if store_path[0..root_store_dir.len()] != root_store_dir {
-        return None;
+        return Ok(None);
     }
     if &nar_hash[0..7] != "sha256:" {
-        return None;
+        return Ok(None);
     }
 
     let mut nar_hash = nar_hash.to_owned();
     if nar_hash.len() == 71 {
-        let con = nixstore::convert_hash("sha256", &nar_hash[7..], true);
-        con.as_ref()?;
-        nar_hash = format!("sha256:{}", con.unwrap());
+        let con = nixstore::convert_hash("sha256", &nar_hash[7..], true)
+            .ok_or("could not convert nar_hash to sha256")?;
+        nar_hash = format!("sha256:{}", con);
     }
 
     if nar_hash.len() != 59 {
-        return None;
+        return Ok(None);
     }
 
     for r in refs {
         if r[0..root_store_dir.len()] != root_store_dir {
-            return None;
+            return Ok(None);
         }
     }
 
-    Some(format!(
+    Ok(Some(format!(
         "1;{};{};{};{}",
         store_path,
         nar_hash,
         nar_size,
         refs.join(",")
-    ))
+    )))
 }
 
-fn query_narinfo(store_dir: &str) -> NarInfo {
-    let path_info = nixstore::query_path_info(store_dir, true).unwrap();
+fn query_narinfo(store_dir: &str) -> Result<NarInfo, Box<dyn Error>> {
+    let path_info = nixstore::query_path_info(store_dir, true)?;
     let mut res = NarInfo {
         store_path: store_dir.into(),
-        url: format!("nar/{}.nar", path_info.narhash.split(':').nth(1).unwrap()),
+        url: format!(
+            "nar/{}.nar",
+            path_info
+                .narhash
+                .split(':')
+                .nth(1)
+                .ok_or("Could not split hash on :")?
+        ),
         compression: "none".into(),
         nar_hash: path_info.narhash,
         nar_size: path_info.size,
@@ -139,17 +134,19 @@ fn query_narinfo(store_dir: &str) -> NarInfo {
     };
 
     if !path_info.refs.is_empty() {
+        // TODO(conni2461): This is kinda ugly find a better solution
         res.references = path_info
             .refs
             .into_iter()
-            .map(|r| {
-                Path::new(&r)
+            .map(|r| -> Result<String, Box<dyn Error>> {
+                Ok(Path::new(&r)
                     .file_name()
-                    .unwrap()
+                    .ok_or("could not get file_name of path")?
                     .to_str()
-                    .unwrap()
-                    .to_owned()
+                    .ok_or("os_str to str yeild a none")?
+                    .to_owned())
             })
+            .filter_map(Result::ok)
             .collect::<Vec<String>>();
     }
 
@@ -157,14 +154,14 @@ fn query_narinfo(store_dir: &str) -> NarInfo {
         res.deriver = Some(
             Path::new(&drv)
                 .file_name()
-                .unwrap()
+                .ok_or("could not get file_name of path")?
                 .to_str()
-                .unwrap()
+                .ok_or("os_str to str yeild a none")?
                 .into(),
         );
 
-        if nixstore::is_valid_path(&drv).unwrap() {
-            let drvpath = nixstore::derivation_from_path(&drv).unwrap();
+        if nixstore::is_valid_path(&drv)? {
+            let drvpath = nixstore::derivation_from_path(&drv)?;
             res.system = Some(drvpath.platform);
         }
     }
@@ -179,7 +176,7 @@ fn query_narinfo(store_dir: &str) -> NarInfo {
     //   my $sig = signString($sign_sk, $fp);
     //   push @res, "Sig: $sig";
     // }
-    res
+    Ok(res)
 }
 
 type NarStore = HashMap<String, String>;
@@ -193,7 +190,7 @@ async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
     data: web::Data<Mutex<NarStore>>,
-) -> Result<HttpResponse, Error> {
+) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = nixhash(&hash);
     if store_path.is_none() {
@@ -201,11 +198,18 @@ async fn get_narinfo(
         return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let narinfo = query_narinfo(&store_path);
+    let narinfo = query_narinfo(&store_path)?;
     {
-        let mut nars = data.lock().unwrap();
-        nars.entry(narinfo.nar_hash.split(':').nth(1).unwrap().to_owned())
-            .or_insert(hash);
+        let mut nars = data.lock().expect("could not lock nars hashmap");
+        nars.entry(
+            narinfo
+                .nar_hash
+                .split(':')
+                .nth(1)
+                .ok_or("Could not split hash on :")?
+                .to_owned(),
+        )
+        .or_insert(hash);
     }
 
     if param.json.is_some() {
@@ -222,9 +226,9 @@ async fn get_narinfo(
 async fn stream_nar(
     nar_hash: web::Path<String>,
     data: web::Data<Mutex<NarStore>>,
-) -> Result<HttpResponse, Error> {
+) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = {
-        let nars = data.lock().unwrap();
+        let nars = data.lock().expect("Could not lock nars hashmap");
         nars.get(&nar_hash.into_inner()).cloned()
     };
     if hash.is_none() {
@@ -239,48 +243,82 @@ async fn stream_nar(
         return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let path_info = nixstore::query_path_info(&store_path, true).unwrap();
-    let export_new = nixstore::export_path(&store_path, path_info.size).unwrap();
+    let path_info = nixstore::query_path_info(&store_path, true)?;
+    let export_new =
+        nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
 
     Ok(HttpResponse::Ok()
         .append_header(("content-type", "application/x-nix-archive"))
         .body(export_new))
 }
 
-async fn version() -> Result<HttpResponse, Error> {
+async fn version() -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok().body("0.1.0"))
 }
 
-async fn cache_info() -> Result<HttpResponse, Error> {
+async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
+    let config = config.lock().expect("could not lock config");
     Ok(HttpResponse::Ok()
         .append_header(("content-type", "text/x-nix-cache-info"))
         .body(
             vec![
-                format!("StoreDir: {}", nixstore::get_store_dir().unwrap()),
+                format!(
+                    "StoreDir: {}",
+                    nixstore::get_store_dir().ok_or("could not get nixstore dir")?
+                ),
                 "WantMassQuery: 1".to_owned(),
-                format!("Priority: {}", PRIORITY),
+                format!("Priority: {}", config.get::<usize>("priority")?),
                 "".to_owned(),
             ]
             .join("\n"),
         ))
 }
 
+fn init_config() -> Result<Config, Box<dyn Error>> {
+    Ok(Config::builder()
+        .set_default("bind", "127.0.0.1:8080")?
+        .set_default("workers", 4)?
+        .set_default("priority", 30)?
+        .set_default("loglevel", "info")?
+        .add_source(config::File::with_name(
+            &std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned()),
+        ))
+        .build()?)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "info,actix_web=debug");
+    let config = init_config().expect("Could not parse config file");
+    std::env::set_var(
+        "RUST_LOG",
+        format!(
+            "{},actix_web=debug",
+            config
+                .get::<String>("loglevel")
+                .expect("No loglevel was set in the config")
+        ),
+    );
     env_logger::init();
+    let bind = config
+        .get::<String>("bind")
+        .expect("No hostname to bind on set");
+    let workers = config
+        .get::<usize>("workers")
+        .expect("No workers option as usize was set");
 
     let actix_data = web::Data::new(Mutex::new(NarStore::new()));
-    info!("listening on port 8080");
+    info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
             .app_data(actix_data.clone())
+            .app_data(config.clone())
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })
-    .bind("127.0.0.1:8081")?
+    .workers(workers)
+    .bind(bind)?
     .run()
     .await
 }

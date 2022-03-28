@@ -67,54 +67,60 @@ extern "C" {
     fn free(p: *mut c_void);
 }
 
-fn c_char_to_str(c_buf: *const c_char) -> String {
+fn c_char_to_str(c_buf: *const c_char) -> Result<String, Box<dyn std::error::Error>> {
     let c_str: &CStr = unsafe { CStr::from_ptr(c_buf) };
-    let str: &str = c_str.to_str().unwrap();
+    let str: &str = c_str.to_str()?;
     let ret = str.to_string();
     unsafe { free(c_buf as *mut _) };
-    ret
+    Ok(ret)
 }
 
 fn c_char_to_option_str(c_buf: *const c_char) -> Option<String> {
     if c_buf.is_null() {
         return None;
     }
-    Some(c_char_to_str(c_buf))
+    c_char_to_str(c_buf).ok()
 }
 
-fn c_string_array_to_str_vec(c_arr: &NixStrArray) -> Vec<String> {
+fn c_string_array_to_str_vec(
+    c_arr: &NixStrArray,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut res = Vec::with_capacity(c_arr.size);
     for i in 0..c_arr.size {
-        unsafe { res.push(c_char_to_str(*(c_arr.arr.add(i)))) };
+        unsafe { res.push(c_char_to_str(*(c_arr.arr.add(i)))?) };
     }
     unsafe { free(c_arr.arr as *mut _) };
-    res
+    Ok(res)
 }
 
-fn c_string_hash_to_str_hashmap_opt(c_hashmap: &NixStrHash) -> HashMap<String, Option<String>> {
+fn c_string_hash_to_str_hashmap_opt(
+    c_hashmap: &NixStrHash,
+) -> Result<HashMap<String, Option<String>>, Box<dyn std::error::Error>> {
     let mut res = HashMap::with_capacity(c_hashmap.size);
     for i in 0..c_hashmap.size {
         unsafe {
             let tup = *(c_hashmap.arr.add(i));
-            res.insert(c_char_to_str((*tup).lhs), c_char_to_option_str((*tup).rhs));
+            res.insert(c_char_to_str((*tup).lhs)?, c_char_to_option_str((*tup).rhs));
             free(tup as *mut _);
         }
     }
     unsafe { free(c_hashmap.arr as *mut _) };
-    res
+    Ok(res)
 }
 
-fn c_string_hash_to_str_hashmap(c_hashmap: &NixStrHash) -> HashMap<String, String> {
+fn c_string_hash_to_str_hashmap(
+    c_hashmap: &NixStrHash,
+) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
     let mut res = HashMap::with_capacity(c_hashmap.size);
     for i in 0..c_hashmap.size {
         unsafe {
             let tup = *(c_hashmap.arr.add(i));
-            res.insert(c_char_to_str((*tup).lhs), c_char_to_str((*tup).rhs));
+            res.insert(c_char_to_str((*tup).lhs)?, c_char_to_str((*tup).rhs)?);
             free(tup as *mut _);
         }
     }
     unsafe { free(c_hashmap.arr as *mut _) };
-    res
+    Ok(res)
 }
 
 #[derive(Debug)]
@@ -151,17 +157,17 @@ pub fn is_valid_path(path: &str) -> Result<bool, std::ffi::NulError> {
 pub fn query_path_info<S: Into<String>>(
     path: S,
     base32: bool,
-) -> Result<PathInfo, std::ffi::NulError> {
+) -> Result<PathInfo, Box<dyn std::error::Error>> {
     let c_path = std::ffi::CString::new(path.into())?;
     unsafe {
         let c_info = nix_query_path_info(c_path.as_ptr(), base32);
         let res = Ok(PathInfo {
             drv: c_char_to_option_str((*c_info).drv),
-            narhash: c_char_to_str((*c_info).narhash),
+            narhash: c_char_to_str((*c_info).narhash)?,
             time: (*c_info).time,
             size: (*c_info).size,
-            refs: c_string_array_to_str_vec(&(*c_info).refs),
-            sigs: c_string_array_to_str_vec(&(*c_info).sigs),
+            refs: c_string_array_to_str_vec(&(*c_info).refs)?,
+            sigs: c_string_array_to_str_vec(&(*c_info).sigs)?,
             ca: c_char_to_option_str((*c_info).ca),
         });
         free(c_info as *mut _);
@@ -170,34 +176,58 @@ pub fn query_path_info<S: Into<String>>(
 }
 
 pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
-    let c_hash_part = std::ffi::CString::new(hash_part).unwrap();
+    let c_hash_part = std::ffi::CString::new(hash_part);
+    if c_hash_part.is_err() {
+        return None;
+    }
+    let c_hash_part = c_hash_part.unwrap();
     c_char_to_option_str(unsafe { nix_query_path_from_hash_part(c_hash_part.as_ptr()) })
 }
 
 pub fn convert_hash(algo: &str, s: &str, to_base_32: bool) -> Option<String> {
-    let c_algo = std::ffi::CString::new(algo).unwrap();
-    let c_s = std::ffi::CString::new(s).unwrap();
+    let c_algo = std::ffi::CString::new(algo);
+    if c_algo.is_err() {
+        return None;
+    }
+    let c_algo = c_algo.unwrap();
+
+    let c_s = std::ffi::CString::new(s);
+    if c_s.is_err() {
+        return None;
+    }
+    let c_s = c_s.unwrap();
     c_char_to_option_str(unsafe { nix_convert_hash(c_algo.as_ptr(), c_s.as_ptr(), to_base_32) })
 }
 
 pub fn sign_string(secret_key: &str, msg: &str) -> Option<String> {
-    let c_secret_key = std::ffi::CString::new(secret_key).unwrap();
-    let c_msg = std::ffi::CString::new(msg).unwrap();
+    let c_secret_key = std::ffi::CString::new(secret_key);
+    if c_secret_key.is_err() {
+        return None;
+    }
+    let c_secret_key = c_secret_key.unwrap();
+
+    let c_msg = std::ffi::CString::new(msg);
+    if c_msg.is_err() {
+        return None;
+    }
+    let c_msg = c_msg.unwrap();
     c_char_to_option_str(unsafe { nix_sign_string(c_secret_key.as_ptr(), c_msg.as_ptr()) })
 }
 
-pub fn derivation_from_path<S: Into<String>>(drv_path: S) -> Result<Drv, std::ffi::NulError> {
+pub fn derivation_from_path<S: Into<String>>(
+    drv_path: S,
+) -> Result<Drv, Box<dyn std::error::Error>> {
     let c_path = std::ffi::CString::new(drv_path.into())?;
     unsafe {
         let c_drv = nix_derivation_from_path(c_path.as_ptr());
         let res = Ok(Drv {
-            outputs: c_string_hash_to_str_hashmap_opt(&(*c_drv).outputs),
-            input_drvs: c_string_array_to_str_vec(&(*c_drv).input_drvs),
-            input_srcs: c_string_array_to_str_vec(&(*c_drv).input_srcs),
-            platform: c_char_to_str((*c_drv).platform),
-            builder: c_char_to_str((*c_drv).builder),
-            args: c_string_array_to_str_vec(&(*c_drv).args),
-            env: c_string_hash_to_str_hashmap(&(*c_drv).env),
+            outputs: c_string_hash_to_str_hashmap_opt(&(*c_drv).outputs)?,
+            input_drvs: c_string_array_to_str_vec(&(*c_drv).input_drvs)?,
+            input_srcs: c_string_array_to_str_vec(&(*c_drv).input_srcs)?,
+            platform: c_char_to_str((*c_drv).platform)?,
+            builder: c_char_to_str((*c_drv).builder)?,
+            args: c_string_array_to_str_vec(&(*c_drv).args)?,
+            env: c_string_hash_to_str_hashmap(&(*c_drv).env)?,
         });
         free(c_drv as *mut _);
         res
