@@ -3,7 +3,8 @@ mod nixstore;
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::sync::Mutex;
+use std::{collections::HashMap, path::Path};
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -30,7 +31,7 @@ fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
         return None;
     }
-    nixstore::query_path_from_hash_part(&hash)
+    nixstore::query_path_from_hash_part(hash)
 }
 
 #[derive(Debug, Serialize)]
@@ -99,9 +100,7 @@ fn fingerprint_path(
     let mut nar_hash = nar_hash.to_owned();
     if nar_hash.len() == 71 {
         let con = nixstore::convert_hash("sha256", &nar_hash[7..], true);
-        if con.is_none() {
-            return None;
-        }
+        con.as_ref()?;
         nar_hash = format!("sha256:{}", con.unwrap());
     }
 
@@ -124,11 +123,11 @@ fn fingerprint_path(
     ))
 }
 
-fn query_narinfo(hash: &str, store_dir: &str) -> NarInfo {
+fn query_narinfo(store_dir: &str) -> NarInfo {
     let path_info = nixstore::query_path_info(store_dir, true).unwrap();
     let mut res = NarInfo {
         store_path: store_dir.into(),
-        url: format!("nar/{}.nar", hash),
+        url: format!("nar/{}.nar", path_info.narhash.split(':').nth(1).unwrap()),
         compression: "none".into(),
         nar_hash: path_info.narhash,
         nar_size: path_info.size,
@@ -183,6 +182,8 @@ fn query_narinfo(hash: &str, store_dir: &str) -> NarInfo {
     res
 }
 
+type NarStore = HashMap<String, String>;
+
 #[derive(Debug, Deserialize)]
 pub struct Param {
     json: Option<String>,
@@ -191,6 +192,7 @@ pub struct Param {
 async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
+    data: web::Data<Mutex<NarStore>>,
 ) -> Result<HttpResponse, Error> {
     let hash = hash.into_inner();
     let store_path = nixhash(&hash);
@@ -199,7 +201,13 @@ async fn get_narinfo(
         return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let narinfo = query_narinfo(&hash, &store_path);
+    let narinfo = query_narinfo(&store_path);
+    {
+        let mut nars = data.lock().unwrap();
+        nars.entry(narinfo.nar_hash.split(':').nth(1).unwrap().to_owned())
+            .or_insert(hash);
+    }
+
     if param.json.is_some() {
         Ok(HttpResponse::Ok().json(narinfo))
     } else {
@@ -211,8 +219,20 @@ async fn get_narinfo(
     }
 }
 
-async fn stream_nar(hash: web::Path<String>) -> Result<HttpResponse, Error> {
-    let hash = hash.into_inner();
+async fn stream_nar(
+    nar_hash: web::Path<String>,
+    data: web::Data<Mutex<NarStore>>,
+) -> Result<HttpResponse, Error> {
+    let hash = {
+        let nars = data.lock().unwrap();
+        nars.get(&nar_hash.into_inner()).cloned()
+    };
+    if hash.is_none() {
+        // TODO(conni2461): handle_miss
+        return Ok(HttpResponse::NotFound().body("missed hash"));
+    }
+    let hash = hash.unwrap();
+
     let store_path = nixhash(&hash);
     if store_path.is_none() {
         // TODO(conni2461): handle_miss
@@ -250,9 +270,11 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "info,actix_web=debug");
     env_logger::init();
 
+    let actix_data = web::Data::new(Mutex::new(NarStore::new()));
     info!("listening on port 8080");
     HttpServer::new(move || {
         App::new()
+            .app_data(actix_data.clone())
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/version", web::get().to(version))
