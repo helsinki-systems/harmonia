@@ -102,7 +102,7 @@ const char *nix_follow_links_to_store_path(const char *path);
 /**
  *
  */
-void nix_export_path(const char *path, char* buffer, size_t size);
+void nix_export_path(const char *path, char *buffer, size_t size);
 
 /**
  *

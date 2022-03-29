@@ -262,7 +262,7 @@ async fn get_narinfo(
     } else {
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
-            .append_header(("content-type", "text/x-nix-narinfo"))
+            .append_header((header::CONTENT_TYPE, "text/x-nix-narinfo"))
             .append_header(("Nix-Link", narinfo.url))
             .body(res))
     }
@@ -332,7 +332,7 @@ async fn stream_nar(
     let bytes = Bytes::from(exported).slice(offset..(offset + length));
 
     Ok(res
-        .append_header(("content-type", "application/x-nix-archive"))
+        .append_header((header::CONTENT_TYPE, "application/x-nix-archive"))
         .append_header((header::ACCEPT_RANGES, "bytes"))
         .body(bytes))
 }
@@ -356,14 +356,78 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
     Ok(HttpResponse::NotFound().finish())
 }
 
+async fn index(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
+    let config = config.lock().expect("could not lock config");
+    Ok(HttpResponse::Ok()
+        .insert_header(header::ContentType(mime::TEXT_HTML_UTF_8))
+        .body(format!(
+            r#"
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>Nix binary cache ({name} {version})</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+        integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC"
+        crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+  <div class="container mt-3">
+    <div class="row justify-content-md-center">
+      <div class="col-md-auto">
+        <p class="lead">
+          This service, provides a "binary cache" for the
+          <a href="https://nixos.org/nix/">Nix package manager</a>
+        </p>
+      </div>
+    </div>
+    <hr>
+    <div class="row">
+      <div class="col text-center">
+        <h4 class="mb-3">Cache Info</h4>
+        <p>Store Dir: {store}</p>
+        <p>Want Mass Query: 1</p>
+        <p>Priority: {priority}</p>
+      </div>
+    </div>
+    <hr>
+    <div class="row">
+      <div class="col text-center">
+        <small class="d-block mb-3 text-muted">
+          Powered by <a href="{repo}">{name}</a>
+        </small>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"#,
+            name = env!("CARGO_PKG_NAME"),
+            version = env!("CARGO_PKG_VERSION"),
+            repo = env!("CARGO_PKG_REPOSITORY"),
+            store = nixstore::get_store_dir().ok_or("could not get nixstore dir")?,
+            priority = config.get::<usize>("priority")?,
+        )))
+}
+
 async fn version() -> Result<HttpResponse, Box<dyn Error>> {
-    Ok(HttpResponse::Ok().body("0.1.0"))
+    Ok(HttpResponse::Ok().body(format!(
+        "{} {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    )))
 }
 
 async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
     let config = config.lock().expect("could not lock config");
     Ok(HttpResponse::Ok()
-        .append_header(("content-type", "text/x-nix-cache-info"))
+        .append_header((header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
                 format!(
@@ -421,6 +485,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(actix_data.clone())
             .app_data(config_data.clone())
+            .route("/", web::get().to(index))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/log/{drv}", web::get().to(get_build_log))
