@@ -14,6 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// C++17 std::visit boilerplate
+template <class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+
 // This is illegal but i dont care
 // TODO(conni2461): In some functions we need to free stuff in the catch block!
 // We don't do that yet so false input might leak memory
@@ -34,6 +38,20 @@ static nix::ref<nix::Store> store() {
     })
   }
   return nix::ref<nix::Store>(_store);
+}
+
+static nix::DerivedPath to_derived_path(const nix::StorePath &store_path) {
+  if (store_path.isDerivation()) {
+    auto drv = store()->readDerivation(store_path);
+    return nix::DerivedPath::Built{
+        .drvPath = store_path,
+        .outputs = drv.outputNames(),
+    };
+  } else {
+    return nix::DerivedPath::Opaque{
+        .path = store_path,
+    };
+  }
 }
 
 static const char *str_dup(std::string_view str) {
@@ -336,7 +354,7 @@ const char *nix_make_fixed_output_path(bool recursive, const char *algo,
 const nix_drv_t *nix_derivation_from_path(const char *drv_path) {
   nix_drv_t *res = (nix_drv_t *)malloc(sizeof(nix_drv_t));
   size_t idx = 0;
-  try {
+  DEFAULT_TRY_CATCH({
     nix::Derivation drv =
         store()->derivationFromPath(store()->parseStorePath(drv_path));
 
@@ -384,15 +402,40 @@ const nix_drv_t *nix_derivation_from_path(const char *drv_path) {
       ++idx;
     }
     return res;
-  } catch (const nix::Error &e) {
-    fprintf(stderr, "%s\n", e.what());
-  }
+  })
   free(res);
   return NULL;
 }
 
 void nix_add_temp_root(const char *store_path) {
   DEFAULT_TRY_CATCH(store()->addTempRoot(store()->parseStorePath(store_path));)
+}
+
+const char *nix_get_build_log(const char *derivation_path) {
+  DEFAULT_TRY_CATCH({
+    auto path = store()->parseStorePath(derivation_path);
+    auto subs = nix::getDefaultSubstituters();
+
+    subs.push_front(store());
+    auto b = to_derived_path(path);
+
+    for (auto &sub : subs) {
+      auto log = std::visit(overloaded{
+                                [&](const nix::DerivedPath::Opaque &bo) {
+                                  return sub->getBuildLog(bo.path);
+                                },
+                                [&](const nix::DerivedPath::Built &bfd) {
+                                  return sub->getBuildLog(bfd.drvPath);
+                                },
+                            },
+                            b.raw());
+      if (!log)
+        continue;
+      return str_dup(*log);
+    }
+  })
+
+  return NULL;
 }
 
 const char *nix_get_bin_dir() {

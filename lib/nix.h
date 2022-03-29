@@ -170,6 +170,11 @@ void nix_add_temp_root(const char *store_path);
 /**
  *
  */
+const char *nix_get_build_log(const char *derivation_path);
+
+/**
+ *
+ */
 const char *nix_get_bin_dir();
 
 /**

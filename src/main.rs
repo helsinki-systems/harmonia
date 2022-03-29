@@ -59,6 +59,14 @@ fn nixhash(hash: &str) -> Option<String> {
     nixstore::query_path_from_hash_part(hash)
 }
 
+fn query_drv_path(drv: &str) -> Option<String> {
+    let drv = if drv.len() > 32 { &drv[0..32] } else { &drv };
+    if drv.len() != 32 {
+        return None;
+    }
+    nixstore::query_path_from_hash_part(drv)
+}
+
 #[derive(Debug, Serialize)]
 struct NarInfo {
     store_path: String,
@@ -329,6 +337,25 @@ async fn stream_nar(
         .body(bytes))
 }
 
+async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
+    let drv_path = query_drv_path(&drv);
+    if drv_path.is_none() {
+        // Not a valid drv_path
+        return Ok(HttpResponse::NotFound().finish());
+    }
+    let drv_path = drv_path.unwrap();
+    if nixstore::is_valid_path(&drv_path)? {
+        let build_log = nixstore::get_build_log(&drv_path);
+        if let Some(log) = build_log {
+            return Ok(HttpResponse::Ok()
+                .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
+                .body(log));
+        }
+        return Ok(HttpResponse::NotFound().finish());
+    }
+    Ok(HttpResponse::NotFound().finish())
+}
+
 async fn version() -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok().body("0.1.0"))
 }
@@ -396,6 +423,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(config_data.clone())
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
+            .route("/log/{drv}", web::get().to(get_build_log))
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })

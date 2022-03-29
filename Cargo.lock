@@ -282,6 +282,7 @@ dependencies = [
  "env_logger",
  "http-range",
  "log",
+ "mime",
  "pkg-config",
  "serde",
  "serde_json",

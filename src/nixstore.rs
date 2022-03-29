@@ -61,6 +61,7 @@ extern "C" {
 
     fn nix_derivation_from_path(drv_path: *const c_char) -> *const NixDrv;
 
+    fn nix_get_build_log(drv_path: *const c_char) -> *const c_char;
     fn nix_get_bin_dir() -> *const c_char;
     fn nix_get_store_dir() -> *const c_char;
 
@@ -214,10 +215,8 @@ pub fn sign_string(secret_key: &str, msg: &str) -> Option<String> {
     c_char_to_option_str(unsafe { nix_sign_string(c_secret_key.as_ptr(), c_msg.as_ptr()) })
 }
 
-pub fn derivation_from_path<S: Into<String>>(
-    drv_path: S,
-) -> Result<Drv, Box<dyn std::error::Error>> {
-    let c_path = std::ffi::CString::new(drv_path.into())?;
+pub fn derivation_from_path(drv_path: &str) -> Result<Drv, Box<dyn std::error::Error>> {
+    let c_path = std::ffi::CString::new(drv_path)?;
     unsafe {
         let c_drv = nix_derivation_from_path(c_path.as_ptr());
         let res = Ok(Drv {
@@ -234,8 +233,8 @@ pub fn derivation_from_path<S: Into<String>>(
     }
 }
 
-pub fn export_path<S: Into<String>>(path: S, size: usize) -> Option<Vec<u8>> {
-    let c_path = std::ffi::CString::new(path.into());
+pub fn export_path(path: &str, size: usize) -> Option<Vec<u8>> {
+    let c_path = std::ffi::CString::new(path);
     if c_path.is_err() {
         return None;
     }
@@ -244,6 +243,15 @@ pub fn export_path<S: Into<String>>(path: S, size: usize) -> Option<Vec<u8>> {
     let mut res: Vec<u8> = vec![0; size];
     unsafe { nix_export_path(c_path.as_ptr(), res.as_mut_ptr() as *mut i8, size) };
     Some(res)
+}
+
+pub fn get_build_log(drv_path: &str) -> Option<String> {
+    let c_path = std::ffi::CString::new(drv_path);
+    if c_path.is_err() {
+        return None;
+    }
+    let c_path = c_path.unwrap();
+    c_char_to_option_str(unsafe { nix_get_build_log(c_path.as_ptr()) })
 }
 
 pub fn get_bin_dir() -> Option<String> {

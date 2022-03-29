@@ -16,6 +16,7 @@ anyhow = "1.0"
 config = "0.12"
 derive_more = "0.99"
 http-range = "0.1"
+mime = "0.3"
 
 [build-dependencies]
 cc = "1.0"
