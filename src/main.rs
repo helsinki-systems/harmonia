@@ -1,7 +1,7 @@
 mod nixstore;
 
 use actix_web::http::{header, StatusCode};
-use actix_web::web::Bytes;
+use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
 use derive_more::{Display, Error};
@@ -331,7 +331,7 @@ async fn stream_nar(
         };
     };
 
-    let bytes = Bytes::from(exported).slice(offset..(offset + length));
+    let bytes = web::Bytes::from(exported).slice(offset..(offset + length));
 
     Ok(res
         .append_header((header::CONTENT_TYPE, "application/x-nix-archive"))
@@ -509,6 +509,7 @@ async fn main() -> std::io::Result<()> {
     info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
+            .wrap(Logger::default())
             .app_data(narstore_data.clone())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
