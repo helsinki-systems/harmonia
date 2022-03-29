@@ -1,7 +1,10 @@
 mod nixstore;
 
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::http::{header, StatusCode};
+use actix_web::web::Bytes;
+use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
+use derive_more::{Display, Error};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -14,6 +17,40 @@ use std::{collections::HashMap, path::Path};
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
+
+// Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/range.rs
+#[derive(Debug, Clone, Copy)]
+pub struct HttpRange {
+    /// Start of range.
+    pub start: usize,
+
+    /// Length of range.
+    pub length: usize,
+}
+
+#[derive(Debug, Clone, Display, Error)]
+#[display(fmt = "Parse HTTP Range failed")]
+pub struct ParseRangeErr(#[error(not(source))] ());
+
+impl HttpRange {
+    /// Parses Range HTTP header string as per RFC 2616.
+    ///
+    /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
+    /// `size` is full size of response (file).
+    pub fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, ParseRangeErr> {
+        info!("header: {}, size: {}", header, size);
+        match http_range::HttpRange::parse(header, size as u64) {
+            Ok(ranges) => Ok(ranges
+                .iter()
+                .map(|range| HttpRange {
+                    start: range.start as usize,
+                    length: range.length as usize,
+                })
+                .collect()),
+            Err(_) => Err(ParseRangeErr(())),
+        }
+    }
+}
 
 fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
@@ -218,7 +255,7 @@ async fn get_narinfo(
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
             .append_header(("content-type", "text/x-nix-narinfo"))
-            .append_header(("Nix-Link", format!("/nar/{}.nar", narinfo.nar_hash)))
+            .append_header(("Nix-Link", narinfo.url))
             .body(res))
     }
 }
@@ -226,6 +263,7 @@ async fn get_narinfo(
 async fn stream_nar(
     nar_hash: web::Path<String>,
     data: web::Data<Mutex<NarStore>>,
+    req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = {
         let nars = data.lock().expect("Could not lock nars hashmap");
@@ -244,12 +282,51 @@ async fn stream_nar(
     }
     let store_path = store_path.unwrap();
     let path_info = nixstore::query_path_info(&store_path, true)?;
-    let export_new =
+    let exported =
         nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
 
-    Ok(HttpResponse::Ok()
+    let mut length = exported.len();
+    let mut offset = 0;
+
+    let mut res = HttpResponse::Ok();
+
+    // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
+    if let Some(ranges) = req.headers().get(header::RANGE) {
+        if let Ok(ranges_header) = ranges.to_str() {
+            if let Ok(ranges) = HttpRange::parse(ranges_header, length) {
+                length = ranges[0].length;
+                offset = ranges[0].start;
+
+                // don't allow compression middleware to modify partial content
+                res.insert_header((
+                    header::CONTENT_ENCODING,
+                    header::HeaderValue::from_static("identity"),
+                ));
+
+                res.insert_header((
+                    header::CONTENT_RANGE,
+                    format!(
+                        "bytes {}-{}/{}",
+                        offset,
+                        offset + length - 1,
+                        exported.len()
+                    ),
+                ));
+            } else {
+                res.insert_header((header::CONTENT_RANGE, format!("bytes */{}", length)));
+                return Ok(res.status(StatusCode::RANGE_NOT_SATISFIABLE).finish());
+            };
+        } else {
+            return Ok(res.status(StatusCode::BAD_REQUEST).finish());
+        };
+    };
+
+    let bytes = Bytes::from(exported).slice(offset..(offset + length));
+
+    Ok(res
         .append_header(("content-type", "application/x-nix-archive"))
-        .body(export_new))
+        .append_header((header::ACCEPT_RANGES, "bytes"))
+        .body(bytes))
 }
 
 async fn version() -> Result<HttpResponse, Box<dyn Error>> {
@@ -278,6 +355,7 @@ fn init_config() -> Result<Config, Box<dyn Error>> {
     Ok(Config::builder()
         .set_default("bind", "127.0.0.1:8080")?
         .set_default("workers", 4)?
+        .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
         .set_default("loglevel", "info")?
         .add_source(config::File::with_name(
@@ -305,19 +383,24 @@ async fn main() -> std::io::Result<()> {
     let workers = config
         .get::<usize>("workers")
         .expect("No workers option as usize was set");
+    let max_connection_rate = config
+        .get::<usize>("max_connection_rate")
+        .expect("No max_connection_rate option as usize was set");
+    let config_data = web::Data::new(Mutex::new(config));
 
     let actix_data = web::Data::new(Mutex::new(NarStore::new()));
     info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
             .app_data(actix_data.clone())
-            .app_data(config.clone())
+            .app_data(config_data.clone())
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })
     .workers(workers)
+    .max_connection_rate(max_connection_rate)
     .bind(bind)?
     .run()
     .await
