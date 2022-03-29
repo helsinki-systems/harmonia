@@ -276,6 +276,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "anyhow",
+ "base64",
  "cc",
  "config",
  "derive_more",

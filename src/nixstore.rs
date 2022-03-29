@@ -155,11 +155,8 @@ pub fn is_valid_path(path: &str) -> Result<bool, std::ffi::NulError> {
     unsafe { Ok(nix_is_valid_path(c_path.as_ptr())) }
 }
 
-pub fn query_path_info<S: Into<String>>(
-    path: S,
-    base32: bool,
-) -> Result<PathInfo, Box<dyn std::error::Error>> {
-    let c_path = std::ffi::CString::new(path.into())?;
+pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, Box<dyn std::error::Error>> {
+    let c_path = std::ffi::CString::new(path)?;
     unsafe {
         let c_info = nix_query_path_info(c_path.as_ptr(), base32);
         let res = Ok(PathInfo {

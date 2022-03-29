@@ -5,7 +5,7 @@ use actix_web::web::Bytes;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
 use derive_more::{Display, Error};
-use log::info;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::sync::Mutex;
@@ -119,8 +119,8 @@ fn format_narinfo_txt(narinfo: &NarInfo) -> String {
 fn fingerprint_path(
     store_path: &str,
     nar_hash: &str,
-    nar_size: &str,
-    refs: &[&str],
+    nar_size: usize,
+    refs: &[String],
 ) -> Result<Option<String>, Box<dyn Error>> {
     let root_store_dir = nixstore::get_store_dir().ok_or("could not get nixstore dir")?;
     if store_path[0..root_store_dir.len()] != root_store_dir {
@@ -156,10 +156,10 @@ fn fingerprint_path(
     )))
 }
 
-fn query_narinfo(store_dir: &str) -> Result<NarInfo, Box<dyn Error>> {
-    let path_info = nixstore::query_path_info(store_dir, true)?;
+fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
+    let path_info = nixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
-        store_path: store_dir.into(),
+        store_path: store_path.into(),
         url: format!(
             "nar/{}.nar",
             path_info
@@ -178,6 +178,7 @@ fn query_narinfo(store_dir: &str) -> Result<NarInfo, Box<dyn Error>> {
         ca: None,
     };
 
+    let refs = path_info.refs.clone();
     if !path_info.refs.is_empty() {
         // TODO(conni2461): This is kinda ugly find a better solution
         res.references = path_info
@@ -215,12 +216,13 @@ fn query_narinfo(store_dir: &str) -> Result<NarInfo, Box<dyn Error>> {
         res.ca = Some(ca);
     }
 
-    //TODO(conni2461): sign_sk
-    // if (defined $sign_sk) {
-    //   my $fp  = fingerprintPath($storePath, $narhash, $size, $refs);
-    //   my $sig = signString($sign_sk, $fp);
-    //   push @res, "Sig: $sig";
-    // }
+    if let Some(sk) = sign_key {
+        let fingerprint = fingerprint_path(store_path, &res.nar_hash, res.nar_size, &refs)?;
+        if let Some(fp) = fingerprint {
+            res.sig = nixstore::sign_string(sk, &fp);
+        }
+    }
+
     Ok(res)
 }
 
@@ -235,6 +237,7 @@ async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
     data: web::Data<Mutex<NarStore>>,
+    sign_key: web::Data<Mutex<Option<String>>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = nixhash(&hash);
@@ -243,19 +246,18 @@ async fn get_narinfo(
         return Ok(HttpResponse::NotFound().body("missed hash"));
     }
     let store_path = store_path.unwrap();
-    let narinfo = query_narinfo(&store_path)?;
-    {
-        let mut nars = data.lock().expect("could not lock nars hashmap");
-        nars.entry(
-            narinfo
-                .nar_hash
-                .split(':')
-                .nth(1)
-                .ok_or("Could not split hash on :")?
-                .to_owned(),
-        )
-        .or_insert(hash);
-    }
+    let sign_key = sign_key.lock().expect("could not lock sign key");
+    let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
+    let mut nars = data.lock().expect("could not lock nars hashmap");
+    nars.entry(
+        narinfo
+            .nar_hash
+            .split(':')
+            .nth(1)
+            .ok_or("Could not split hash on :")?
+            .to_owned(),
+    )
+    .or_insert(hash);
 
     if param.json.is_some() {
         Ok(HttpResponse::Ok().json(narinfo))
@@ -449,10 +451,27 @@ fn init_config() -> Result<Config, Box<dyn Error>> {
         .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
         .set_default("loglevel", "info")?
+        .set_default::<_, Option<String>>("sign_key_path", None)?
         .add_source(config::File::with_name(
             &std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned()),
         ))
         .build()?)
+}
+
+fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn Error>> {
+    if let Some(path) = sign_key_path {
+        let sign_key = std::fs::read_to_string(path)?;
+        let (_sign_host, sign_key64) = sign_key
+            .split_once(':')
+            .ok_or("Sign key does not contain a ':'")?;
+        let sign_keyno64 = base64::decode(sign_key64)?;
+        if sign_keyno64.len() != 64 {
+            error!("invalid signing key provided. signing disabled");
+        } else {
+            return Ok(Some(sign_key.to_owned()));
+        }
+    }
+    Ok(None)
 }
 
 #[actix_web::main]
@@ -477,14 +496,22 @@ async fn main() -> std::io::Result<()> {
     let max_connection_rate = config
         .get::<usize>("max_connection_rate")
         .expect("No max_connection_rate option as usize was set");
-    let config_data = web::Data::new(Mutex::new(config));
+    let sign_key_path = config
+        .get::<Option<String>>("sign_key_path")
+        .expect("sign_key_path should be at least None, but it isn't. This shouldn't happen");
+    let secret_key = get_secret_key(sign_key_path.as_deref())
+        .expect("Unexpected error while extracting the secret key");
 
-    let actix_data = web::Data::new(Mutex::new(NarStore::new()));
+    let narstore_data = web::Data::new(Mutex::new(NarStore::new()));
+    let conf_data = web::Data::new(Mutex::new(config));
+    let secret_key_data = web::Data::new(Mutex::new(secret_key));
+
     info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
-            .app_data(actix_data.clone())
-            .app_data(config_data.clone())
+            .app_data(narstore_data.clone())
+            .app_data(conf_data.clone())
+            .app_data(secret_key_data.clone())
             .route("/", web::get().to(index))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))

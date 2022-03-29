@@ -18,6 +18,7 @@ config = "0.12"
 derive_more = "0.99"
 http-range = "0.1"
 mime = "0.3"
+base64 = "0.13"
 
 [build-dependencies]
 cc = "1.0"
