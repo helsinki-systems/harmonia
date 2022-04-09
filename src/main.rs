@@ -240,12 +240,10 @@ async fn get_narinfo(
     sign_key: web::Data<Mutex<Option<String>>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
-    let store_path = nixhash(&hash);
-    if store_path.is_none() {
-        // TODO(conni2461): handle_miss
-        return Ok(HttpResponse::NotFound().body("missed hash"));
-    }
-    let store_path = store_path.unwrap();
+    let store_path = match nixhash(&hash) {
+        Some(v) => v,
+        None => return Ok(HttpResponse::NotFound().body("missed hash")),
+    };
     let sign_key = sign_key.lock().expect("could not lock sign key");
     let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
     let mut nars = data.lock().expect("could not lock nars hashmap");
@@ -258,6 +256,7 @@ async fn get_narinfo(
             .to_owned(),
     )
     .or_insert(hash);
+    drop(nars);
 
     if param.json.is_some() {
         Ok(HttpResponse::Ok().json(narinfo))
@@ -275,22 +274,18 @@ async fn stream_nar(
     data: web::Data<Mutex<NarStore>>,
     req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
-    let hash = {
+    let hash = match {
         let nars = data.lock().expect("Could not lock nars hashmap");
         nars.get(&nar_hash.into_inner()).cloned()
+    } {
+        Some(v) => v,
+        None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
-    if hash.is_none() {
-        // TODO(conni2461): handle_miss
-        return Ok(HttpResponse::NotFound().body("missed hash"));
-    }
-    let hash = hash.unwrap();
 
-    let store_path = nixhash(&hash);
-    if store_path.is_none() {
-        // TODO(conni2461): handle_miss
-        return Ok(HttpResponse::NotFound().body("missed hash"));
-    }
-    let store_path = store_path.unwrap();
+    let store_path = match nixhash(&hash) {
+        Some(v) => v,
+        None => return Ok(HttpResponse::NotFound().body("missed hash")),
+    };
     let path_info = nixstore::query_path_info(&store_path, true)?;
     let exported =
         nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
@@ -340,20 +335,18 @@ async fn stream_nar(
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
-    let drv_path = query_drv_path(&drv);
-    if drv_path.is_none() {
-        // Not a valid drv_path
-        return Ok(HttpResponse::NotFound().finish());
-    }
-    let drv_path = drv_path.unwrap();
+    let drv_path = match query_drv_path(&drv) {
+        Some(v) => v,
+        None => return Ok(HttpResponse::NotFound().finish()),
+    };
     if nixstore::is_valid_path(&drv_path)? {
-        let build_log = nixstore::get_build_log(&drv_path);
-        if let Some(log) = build_log {
-            return Ok(HttpResponse::Ok()
-                .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
-                .body(log));
-        }
-        return Ok(HttpResponse::NotFound().finish());
+        let build_log = match nixstore::get_build_log(&drv_path) {
+            Some(v) => v,
+            None => return Ok(HttpResponse::NotFound().finish()),
+        };
+        return Ok(HttpResponse::Ok()
+            .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
+            .body(build_log));
     }
     Ok(HttpResponse::NotFound().finish())
 }
