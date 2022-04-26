@@ -60,7 +60,7 @@ fn nixhash(hash: &str) -> Option<String> {
 }
 
 fn query_drv_path(drv: &str) -> Option<String> {
-    let drv = if drv.len() > 32 { &drv[0..32] } else { &drv };
+    let drv = if drv.len() > 32 { &drv[0..32] } else { drv };
     if drv.len() != 32 {
         return None;
     }

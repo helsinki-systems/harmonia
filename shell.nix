@@ -1,9 +1,9 @@
-with import <nixpkgs-unstable> { };
+with import <nixpkgs> { };
 stdenv.mkDerivation {
   name = "bc";
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
-    nix
+    nix_2_7
     nlohmann_json
     libsodium
     boost
