@@ -1,6 +1,6 @@
 with import <nixpkgs> { };
 stdenv.mkDerivation {
-  name = "bc";
+  name = "harmonia";
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
     nix_2_7

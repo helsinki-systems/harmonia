@@ -1,8 +1,8 @@
 [package]
-name = "bc"
+name = "harmonia"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/conni2461/bc"
+repository = "https://github.com/conni2461/harmonia"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
