@@ -443,7 +443,6 @@ fn init_config() -> Result<Config, Box<dyn Error>> {
         .set_default("workers", 4)?
         .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
-        .set_default("loglevel", "info")?
         .set_default::<_, Option<String>>("sign_key_path", None)?
         .add_source(config::File::with_name(
             &std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned()),
@@ -470,16 +469,11 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = init_config().expect("Could not parse config file");
-    std::env::set_var(
-        "RUST_LOG",
-        format!(
-            "{},actix_web=debug",
-            config
-                .get::<String>("loglevel")
-                .expect("No loglevel was set in the config")
-        ),
-    );
-    env_logger::init();
+
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,actix_web=debug"),
+    )
+    .init();
     let bind = config
         .get::<String>("bind")
         .expect("No hostname to bind on set");
