@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_uchar, c_ulong, c_void};
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
 
 #[repr(C)]
 struct NixStrArray {
@@ -51,6 +53,7 @@ extern "C" {
     fn nix_is_valid_path(path: *const c_char) -> bool;
 
     fn nix_export_path(path: *const c_char, buf: *mut c_uchar, size: usize);
+    fn nix_export_path_to(paths: *const c_char, fd: i32);
 
     fn nix_query_path_info(path: *const c_char, base32: bool) -> *const NixPathInfo;
 
@@ -174,41 +177,34 @@ pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, Box<dyn std
 }
 
 pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
-    let c_hash_part = std::ffi::CString::new(hash_part);
-    if c_hash_part.is_err() {
-        return None;
-    }
-    let c_hash_part = c_hash_part.unwrap();
+    let c_hash_part = match { std::ffi::CString::new(hash_part) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
     c_char_to_option_str(unsafe { nix_query_path_from_hash_part(c_hash_part.as_ptr()) })
 }
 
 pub fn convert_hash(algo: &str, s: &str, to_base_32: bool) -> Option<String> {
-    let c_algo = std::ffi::CString::new(algo);
-    if c_algo.is_err() {
-        return None;
-    }
-    let c_algo = c_algo.unwrap();
-
-    let c_s = std::ffi::CString::new(s);
-    if c_s.is_err() {
-        return None;
-    }
-    let c_s = c_s.unwrap();
+    let c_algo = match { std::ffi::CString::new(algo) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let c_s = match { std::ffi::CString::new(s) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
     c_char_to_option_str(unsafe { nix_convert_hash(c_algo.as_ptr(), c_s.as_ptr(), to_base_32) })
 }
 
 pub fn sign_string(secret_key: &str, msg: &str) -> Option<String> {
-    let c_secret_key = std::ffi::CString::new(secret_key);
-    if c_secret_key.is_err() {
-        return None;
-    }
-    let c_secret_key = c_secret_key.unwrap();
-
-    let c_msg = std::ffi::CString::new(msg);
-    if c_msg.is_err() {
-        return None;
-    }
-    let c_msg = c_msg.unwrap();
+    let c_secret_key = match { std::ffi::CString::new(secret_key) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let c_msg = match { std::ffi::CString::new(msg) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
     c_char_to_option_str(unsafe { nix_sign_string(c_secret_key.as_ptr(), c_msg.as_ptr()) })
 }
 
@@ -231,23 +227,31 @@ pub fn derivation_from_path(drv_path: &str) -> Result<Drv, Box<dyn std::error::E
 }
 
 pub fn export_path(path: &str, size: usize) -> Option<Vec<u8>> {
-    let c_path = std::ffi::CString::new(path);
-    if c_path.is_err() {
-        return None;
-    }
-    let c_path = c_path.unwrap();
+    let c_path = match { std::ffi::CString::new(path) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
 
     let mut res: Vec<u8> = vec![0; size];
     unsafe { nix_export_path(c_path.as_ptr(), res.as_mut_ptr(), size) };
     Some(res)
 }
 
+pub fn export_path_to(path: &str, fd: RawFd) -> Option<()> {
+    let c_path = match { std::ffi::CString::new(path) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    unsafe { nix_export_path_to(c_path.as_ptr(), fd as i32) };
+
+    Some(())
+}
+
 pub fn get_build_log(drv_path: &str) -> Option<String> {
-    let c_path = std::ffi::CString::new(drv_path);
-    if c_path.is_err() {
-        return None;
-    }
-    let c_path = c_path.unwrap();
+    let c_path = match { std::ffi::CString::new(drv_path) } {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
     c_char_to_option_str(unsafe { nix_get_build_log(c_path.as_ptr()) })
 }
 

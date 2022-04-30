@@ -1,56 +1,25 @@
 mod nixstore;
 
-use actix_web::http::{header, StatusCode};
-use actix_web::middleware::Logger;
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_files::{HttpRange, NamedFile};
+use actix_web::{
+    http::{header, StatusCode},
+    middleware::Logger,
+    web, App, HttpRequest, HttpResponse, HttpServer,
+};
 use config::Config;
-use derive_more::{Display, Error};
-use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::Mutex;
-use std::{collections::HashMap, path::Path};
+
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+use std::{collections::HashMap, path::Path, sync::Mutex};
+use tempfile::NamedTempFile;
 
 // TODO(conni2461): conf file
 // - users to restrict access
-// - signing
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
-
-// Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/range.rs
-#[derive(Debug, Clone, Copy)]
-pub struct HttpRange {
-    /// Start of range.
-    pub start: usize,
-
-    /// Length of range.
-    pub length: usize,
-}
-
-#[derive(Debug, Clone, Display, Error)]
-#[display(fmt = "Parse HTTP Range failed")]
-pub struct ParseRangeErr(#[error(not(source))] ());
-
-impl HttpRange {
-    /// Parses Range HTTP header string as per RFC 2616.
-    ///
-    /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
-    /// `size` is full size of response (file).
-    pub fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, ParseRangeErr> {
-        info!("header: {}, size: {}", header, size);
-        match http_range::HttpRange::parse(header, size as u64) {
-            Ok(ranges) => Ok(ranges
-                .iter()
-                .map(|range| HttpRange {
-                    start: range.start as usize,
-                    length: range.length as usize,
-                })
-                .collect()),
-            Err(_) => Err(ParseRangeErr(())),
-        }
-    }
-}
 
 fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
@@ -287,51 +256,65 @@ async fn stream_nar(
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
     let path_info = nixstore::query_path_info(&store_path, true)?;
-    let exported =
-        nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
+    let mime = "application/x-nix-archive".parse::<mime::Mime>()?;
 
-    let mut length = exported.len();
-    let mut offset = 0;
+    if path_info.size > 1024 * 32 * 32 {
+        log::debug!("export with NamedTempFile");
+        let temp_file = NamedTempFile::new()?;
+        nixstore::export_path_to(&store_path, temp_file.as_raw_fd())
+            .ok_or("Could not export path")?;
+        let response_file = NamedFile::open_async(temp_file)
+            .await?
+            .disable_content_disposition()
+            .set_content_type(mime);
+        Ok(response_file.into_response(&req))
+    } else {
+        log::debug!("export with u8 buffer");
+        let exported =
+            nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
 
-    let mut res = HttpResponse::Ok();
+        let mut length = exported.len() as u64;
+        let mut offset = 0_u64;
 
-    // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
-    if let Some(ranges) = req.headers().get(header::RANGE) {
-        if let Ok(ranges_header) = ranges.to_str() {
-            if let Ok(ranges) = HttpRange::parse(ranges_header, length) {
-                length = ranges[0].length;
-                offset = ranges[0].start;
+        let mut res = HttpResponse::Ok();
 
-                // don't allow compression middleware to modify partial content
-                res.insert_header((
-                    header::CONTENT_ENCODING,
-                    header::HeaderValue::from_static("identity"),
-                ));
+        // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
+        if let Some(ranges) = req.headers().get(header::RANGE) {
+            if let Ok(ranges_header) = ranges.to_str() {
+                if let Ok(ranges) = HttpRange::parse(ranges_header, length) {
+                    length = ranges[0].length as u64;
+                    offset = ranges[0].start as u64;
 
-                res.insert_header((
-                    header::CONTENT_RANGE,
-                    format!(
-                        "bytes {}-{}/{}",
-                        offset,
-                        offset + length - 1,
-                        exported.len()
-                    ),
-                ));
+                    // don't allow compression middleware to modify partial content
+                    res.insert_header((
+                        header::CONTENT_ENCODING,
+                        header::HeaderValue::from_static("identity"),
+                    ));
+
+                    res.insert_header((
+                        header::CONTENT_RANGE,
+                        format!(
+                            "bytes {}-{}/{}",
+                            offset,
+                            offset + length - 1,
+                            exported.len()
+                        ),
+                    ));
+                } else {
+                    res.insert_header((header::CONTENT_RANGE, format!("bytes */{}", length)));
+                    return Ok(res.status(StatusCode::RANGE_NOT_SATISFIABLE).finish());
+                };
             } else {
-                res.insert_header((header::CONTENT_RANGE, format!("bytes */{}", length)));
-                return Ok(res.status(StatusCode::RANGE_NOT_SATISFIABLE).finish());
+                return Ok(res.status(StatusCode::BAD_REQUEST).finish());
             };
-        } else {
-            return Ok(res.status(StatusCode::BAD_REQUEST).finish());
         };
-    };
 
-    let bytes = web::Bytes::from(exported).slice(offset..(offset + length));
-
-    Ok(res
-        .append_header((header::CONTENT_TYPE, "application/x-nix-archive"))
-        .append_header((header::ACCEPT_RANGES, "bytes"))
-        .body(bytes))
+        let bytes = web::Bytes::from(exported).slice(offset as usize..(offset + length) as usize);
+        Ok(res
+            .insert_header(header::ContentType(mime))
+            .append_header((header::ACCEPT_RANGES, "bytes"))
+            .body(bytes))
+    }
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -458,7 +441,7 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
             .ok_or("Sign key does not contain a ':'")?;
         let sign_keyno64 = base64::decode(sign_key64)?;
         if sign_keyno64.len() != 64 {
-            error!("invalid signing key provided. signing disabled");
+            log::error!("invalid signing key provided. signing disabled");
         } else {
             return Ok(Some(sign_key.to_owned()));
         }
@@ -471,7 +454,7 @@ async fn main() -> std::io::Result<()> {
     let config = init_config().expect("Could not parse config file");
 
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,actix_web=debug"),
+        env_logger::Env::default().default_filter_or("debug,actix_web=debug"),
     )
     .init();
     let bind = config
@@ -493,7 +476,7 @@ async fn main() -> std::io::Result<()> {
     let conf_data = web::Data::new(Mutex::new(config));
     let secret_key_data = web::Data::new(Mutex::new(secret_key));
 
-    info!("listening on {}", bind);
+    log::info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
