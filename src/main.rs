@@ -149,7 +149,6 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
 
     let refs = path_info.refs.clone();
     if !path_info.refs.is_empty() {
-        // TODO(conni2461): This is kinda ugly find a better solution
         res.references = path_info
             .refs
             .into_iter()
@@ -158,7 +157,7 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
                     .file_name()
                     .ok_or("could not get file_name of path")?
                     .to_str()
-                    .ok_or("os_str to str yeild a none")?
+                    .ok_or("os_str to str yield a none")?
                     .to_owned())
             })
             .filter_map(Result::ok)
@@ -171,7 +170,7 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
                 .file_name()
                 .ok_or("could not get file_name of path")?
                 .to_str()
-                .ok_or("os_str to str yeild a none")?
+                .ok_or("os_str to str yield a none")?
                 .into(),
         );
 
@@ -206,14 +205,13 @@ async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
     data: web::Data<Mutex<NarStore>>,
-    sign_key: web::Data<Mutex<Option<String>>>,
+    sign_key: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = match nixhash(&hash) {
         Some(v) => v,
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
-    let sign_key = sign_key.lock().expect("could not lock sign key");
     let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
     let mut nars = data.lock().expect("could not lock nars hashmap");
     nars.entry(
@@ -241,6 +239,7 @@ async fn get_narinfo(
 async fn stream_nar(
     nar_hash: web::Path<String>,
     data: web::Data<Mutex<NarStore>>,
+    config: web::Data<Config>,
     req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = match {
@@ -258,7 +257,7 @@ async fn stream_nar(
     let path_info = nixstore::query_path_info(&store_path, true)?;
     let mime = "application/x-nix-archive".parse::<mime::Mime>()?;
 
-    if path_info.size > 1024 * 32 * 32 {
+    if path_info.size > config.get::<usize>("tempfile_threshold")? {
         log::debug!("export with NamedTempFile");
         let temp_file = NamedTempFile::new()?;
         nixstore::export_path_to(&store_path, temp_file.as_raw_fd())
@@ -334,8 +333,7 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
     Ok(HttpResponse::NotFound().finish())
 }
 
-async fn index(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
-    let config = config.lock().expect("could not lock config");
+async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
         .insert_header(header::ContentType(mime::TEXT_HTML_UTF_8))
         .body(format!(
@@ -402,8 +400,7 @@ async fn version() -> Result<HttpResponse, Box<dyn Error>> {
     )))
 }
 
-async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
-    let config = config.lock().expect("could not lock config");
+async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
         .append_header((header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
@@ -421,16 +418,26 @@ async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Bo
 }
 
 fn init_config() -> Result<Config, Box<dyn Error>> {
-    Ok(Config::builder()
+    let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
+
+    let mut builder = Config::builder()
         .set_default("bind", "127.0.0.1:8080")?
         .set_default("workers", 4)?
         .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
-        .set_default::<_, Option<String>>("sign_key_path", None)?
-        .add_source(config::File::with_name(
-            &std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned()),
-        ))
-        .build()?)
+        .set_default("tempfile_threshold", 1024 * 1024 * 8)?
+        .set_default::<_, Option<String>>("sign_key_path", None)?;
+
+    if Path::new(&settings_file).exists() {
+        builder = builder.add_source(config::File::with_name(&settings_file))
+    } else {
+        log::warn!(
+            "Config file {} was not found. Using default values",
+            settings_file
+        )
+    }
+
+    Ok(builder.build()?)
 }
 
 fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn Error>> {
@@ -451,12 +458,12 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config = init_config().expect("Could not parse config file");
-
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("debug,actix_web=debug"),
     )
     .init();
+
+    let config = init_config().expect("Could not parse config file");
     let bind = config
         .get::<String>("bind")
         .expect("No hostname to bind on set");
@@ -473,8 +480,8 @@ async fn main() -> std::io::Result<()> {
         .expect("Unexpected error while extracting the secret key");
 
     let narstore_data = web::Data::new(Mutex::new(NarStore::new()));
-    let conf_data = web::Data::new(Mutex::new(config));
-    let secret_key_data = web::Data::new(Mutex::new(secret_key));
+    let conf_data = web::Data::new(config);
+    let secret_key_data = web::Data::new(secret_key);
 
     log::info!("listening on {}", bind);
     HttpServer::new(move || {
