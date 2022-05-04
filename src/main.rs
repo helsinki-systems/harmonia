@@ -1,19 +1,12 @@
 mod nixstore;
 
-use actix_files::{HttpRange, NamedFile};
-use actix_web::{
-    http::{header, StatusCode},
-    middleware::Logger,
-    web, App, HttpRequest, HttpResponse, HttpServer,
-};
+use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
 use std::{collections::HashMap, path::Path, sync::Mutex};
-use tempfile::NamedTempFile;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -230,7 +223,7 @@ async fn get_narinfo(
     } else {
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
-            .append_header((header::CONTENT_TYPE, "text/x-nix-narinfo"))
+            .append_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
             .append_header(("Nix-Link", narinfo.url))
             .body(res))
     }
@@ -239,8 +232,7 @@ async fn get_narinfo(
 async fn stream_nar(
     nar_hash: web::Path<String>,
     data: web::Data<Mutex<NarStore>>,
-    config: web::Data<Config>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = match {
         let nars = data.lock().expect("Could not lock nars hashmap");
@@ -254,66 +246,37 @@ async fn stream_nar(
         Some(v) => v,
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
-    let path_info = nixstore::query_path_info(&store_path, true)?;
-    let mime = "application/x-nix-archive".parse::<mime::Mime>()?;
 
-    if path_info.size > config.get::<usize>("tempfile_threshold")? {
-        log::debug!("export with NamedTempFile");
-        let temp_file = NamedTempFile::new()?;
-        nixstore::export_path_to(&store_path, temp_file.as_raw_fd())
-            .ok_or("Could not export path")?;
-        let response_file = NamedFile::open_async(temp_file)
-            .await?
-            .disable_content_disposition()
-            .set_content_type(mime);
-        Ok(response_file.into_response(&req))
-    } else {
-        log::debug!("export with u8 buffer");
-        let exported =
-            nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
+    let mut child = Command::new("nix-store")
+        .arg("--dump")
+        .arg(&store_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
 
-        let mut length = exported.len() as u64;
-        let mut offset = 0_u64;
+    let (tx, rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
+    let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let mut reader = BufReader::new(child.stdout.take().ok_or("")?);
+    actix_web::rt::spawn(async move {
+        while let Ok(bytes) = reader.fill_buf().await {
+            if bytes.is_empty() {
+                break;
+            }
 
-        let mut res = HttpResponse::Ok();
+            let bytes = bytes.to_vec();
+            let length = bytes.len();
+            reader.consume(length);
 
-        // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
-        if let Some(ranges) = req.headers().get(header::RANGE) {
-            if let Ok(ranges_header) = ranges.to_str() {
-                if let Ok(ranges) = HttpRange::parse(ranges_header, length) {
-                    length = ranges[0].length as u64;
-                    offset = ranges[0].start as u64;
+            match tx.send(Ok(web::Bytes::from(bytes))) {
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+    });
 
-                    // don't allow compression middleware to modify partial content
-                    res.insert_header((
-                        header::CONTENT_ENCODING,
-                        header::HeaderValue::from_static("identity"),
-                    ));
-
-                    res.insert_header((
-                        header::CONTENT_RANGE,
-                        format!(
-                            "bytes {}-{}/{}",
-                            offset,
-                            offset + length - 1,
-                            exported.len()
-                        ),
-                    ));
-                } else {
-                    res.insert_header((header::CONTENT_RANGE, format!("bytes */{}", length)));
-                    return Ok(res.status(StatusCode::RANGE_NOT_SATISFIABLE).finish());
-                };
-            } else {
-                return Ok(res.status(StatusCode::BAD_REQUEST).finish());
-            };
-        };
-
-        let bytes = web::Bytes::from(exported).slice(offset as usize..(offset + length) as usize);
-        Ok(res
-            .insert_header(header::ContentType(mime))
-            .append_header((header::ACCEPT_RANGES, "bytes"))
-            .body(bytes))
-    }
+    Ok(HttpResponse::Ok()
+        .append_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
+        .streaming(rx))
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -327,7 +290,7 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
             None => return Ok(HttpResponse::NotFound().finish()),
         };
         return Ok(HttpResponse::Ok()
-            .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
+            .insert_header(http::header::ContentType(mime::TEXT_PLAIN_UTF_8))
             .body(build_log));
     }
     Ok(HttpResponse::NotFound().finish())
@@ -335,7 +298,7 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
 
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
-        .insert_header(header::ContentType(mime::TEXT_HTML_UTF_8))
+        .insert_header(http::header::ContentType(mime::TEXT_HTML_UTF_8))
         .body(format!(
             r#"
 <!DOCTYPE html>
@@ -402,7 +365,7 @@ async fn version() -> Result<HttpResponse, Box<dyn Error>> {
 
 async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
-        .append_header((header::CONTENT_TYPE, "text/x-nix-cache-info"))
+        .append_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
                 format!(
@@ -425,7 +388,6 @@ fn init_config() -> Result<Config, Box<dyn Error>> {
         .set_default("workers", 4)?
         .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
-        .set_default("tempfile_threshold", 1024 * 1024 * 8)?
         .set_default::<_, Option<String>>("sign_key_path", None)?;
 
     if Path::new(&settings_file).exists() {
@@ -486,7 +448,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(middleware::Logger::default())
             .app_data(narstore_data.clone())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
