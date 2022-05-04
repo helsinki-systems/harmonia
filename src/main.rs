@@ -14,6 +14,33 @@ use tokio::process::Command;
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
 
+// Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/range.rs
+#[derive(Debug)]
+struct HttpRange {
+    start: usize,
+    length: usize,
+}
+
+impl HttpRange {
+    /// Parses Range HTTP header string as per RFC 2616.
+    ///
+    /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
+    /// `size` is full size of response (file).
+    fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, http_range::HttpRangeParseError> {
+        log::info!("header: {}, size: {}", header, size);
+        match http_range::HttpRange::parse(header, size as u64) {
+            Ok(ranges) => Ok(ranges
+                .iter()
+                .map(|range| HttpRange {
+                    start: range.start as usize,
+                    length: range.length as usize,
+                })
+                .collect()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
         return None;
@@ -223,8 +250,8 @@ async fn get_narinfo(
     } else {
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
-            .append_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
-            .append_header(("Nix-Link", narinfo.url))
+            .insert_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
+            .insert_header(("Nix-Link", narinfo.url))
             .body(res))
     }
 }
@@ -232,7 +259,7 @@ async fn get_narinfo(
 async fn stream_nar(
     nar_hash: web::Path<String>,
     data: web::Data<Mutex<NarStore>>,
-    _req: HttpRequest,
+    req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = match {
         let nars = data.lock().expect("Could not lock nars hashmap");
@@ -247,6 +274,37 @@ async fn stream_nar(
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
 
+    let size = nixstore::query_path_info(&store_path, true)?.size;
+    let mut rlength = size;
+    let mut offset = 0;
+    let mut res = HttpResponse::Ok();
+
+    // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
+    if let Some(ranges) = req.headers().get(http::header::RANGE) {
+        if let Ok(ranges_header) = ranges.to_str() {
+            if let Ok(ranges) = HttpRange::parse(ranges_header, rlength) {
+                rlength = ranges[0].length;
+                offset = ranges[0].start;
+
+                // don't allow compression middleware to modify partial content
+                res.insert_header((
+                    http::header::CONTENT_ENCODING,
+                    http::header::HeaderValue::from_static("identity"),
+                ));
+
+                res.insert_header((
+                    http::header::CONTENT_RANGE,
+                    format!("bytes {}-{}/{}", offset, offset + rlength - 1, size,),
+                ));
+            } else {
+                res.insert_header((http::header::CONTENT_RANGE, format!("bytes */{}", rlength)));
+                return Ok(res.status(http::StatusCode::RANGE_NOT_SATISFIABLE).finish());
+            };
+        } else {
+            return Ok(res.status(http::StatusCode::BAD_REQUEST).finish());
+        };
+    };
+
     let mut child = Command::new("nix-store")
         .arg("--dump")
         .arg(&store_path)
@@ -258,25 +316,39 @@ async fn stream_nar(
     let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     let mut reader = BufReader::new(child.stdout.take().ok_or("")?);
     actix_web::rt::spawn(async move {
+        let mut send = 0;
         while let Ok(bytes) = reader.fill_buf().await {
             if bytes.is_empty() {
                 break;
             }
 
-            let bytes = bytes.to_vec();
             let length = bytes.len();
-            reader.consume(length);
-
-            match tx.send(Ok(web::Bytes::from(bytes))) {
-                Ok(_) => continue,
-                Err(_) => break,
+            if offset <= send + length {
+                let bytes = bytes.to_vec();
+                let start = if offset > send { offset - send } else { 0 };
+                let end = if (offset + rlength) < (send + length) {
+                    start + rlength
+                } else {
+                    length
+                };
+                reader.consume(length);
+                send += end;
+                let res = tx.send(Ok(web::Bytes::from(bytes).slice(start..end)));
+                if res.is_err() || end != length {
+                    child.start_kill().expect("Trying to kill child process");
+                    break;
+                }
+            } else {
+                send += length;
+                reader.consume(length);
             }
         }
     });
 
-    Ok(HttpResponse::Ok()
-        .append_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
-        .streaming(rx))
+    Ok(res
+        .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
+        .insert_header((http::header::ACCEPT_RANGES, "bytes"))
+        .body(actix_web::body::SizedStream::new(rlength as u64, rx)))
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -365,7 +437,7 @@ async fn version() -> Result<HttpResponse, Box<dyn Error>> {
 
 async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
-        .append_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
+        .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
                 format!(
@@ -421,7 +493,7 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("debug,actix_web=debug"),
+        env_logger::Env::default().default_filter_or("info,actix_web=debug"),
     )
     .init();
 
