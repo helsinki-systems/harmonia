@@ -238,8 +238,17 @@ struct CBufSink : nix::Sink {
 };
 
 void nix_export_path(const char *path, uint8_t *buffer, size_t size) {
-  CBufSink sink((char *)buffer, size);
-  store()->exportPath(store()->parseStorePath(path), sink);
+  DEFAULT_TRY_CATCH({
+    CBufSink sink((char *)buffer, size);
+    store()->exportPath(store()->parseStorePath(path), sink);
+  })
+}
+
+void nix_export_path_to(const char *path, int32_t fd) {
+  DEFAULT_TRY_CATCH({
+    nix::FdSink sink(fd);
+    store()->exportPath(store()->parseStorePath(path), sink);
+  })
 }
 
 void nix_export_paths(int32_t fd, const char **paths) {

@@ -1,4 +1,0 @@
-bind = "127.0.0.1:8080"
-workers = 4
-max_connection_rate = 256
-priority = 30

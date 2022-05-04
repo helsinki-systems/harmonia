@@ -1,44 +1,33 @@
 mod nixstore;
 
-use actix_web::http::{header, StatusCode};
-use actix_web::middleware::Logger;
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
-use derive_more::{Display, Error};
-use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::Mutex;
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, sync::Mutex};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 // TODO(conni2461): conf file
 // - users to restrict access
-// - signing
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
 
 // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/range.rs
-#[derive(Debug, Clone, Copy)]
-pub struct HttpRange {
-    /// Start of range.
-    pub start: usize,
-
-    /// Length of range.
-    pub length: usize,
+#[derive(Debug)]
+struct HttpRange {
+    start: usize,
+    length: usize,
 }
-
-#[derive(Debug, Clone, Display, Error)]
-#[display(fmt = "Parse HTTP Range failed")]
-pub struct ParseRangeErr(#[error(not(source))] ());
 
 impl HttpRange {
     /// Parses Range HTTP header string as per RFC 2616.
     ///
     /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
     /// `size` is full size of response (file).
-    pub fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, ParseRangeErr> {
-        info!("header: {}, size: {}", header, size);
+    fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, http_range::HttpRangeParseError> {
+        log::info!("header: {}, size: {}", header, size);
         match http_range::HttpRange::parse(header, size as u64) {
             Ok(ranges) => Ok(ranges
                 .iter()
@@ -47,7 +36,7 @@ impl HttpRange {
                     length: range.length as usize,
                 })
                 .collect()),
-            Err(_) => Err(ParseRangeErr(())),
+            Err(e) => Err(e),
         }
     }
 }
@@ -180,7 +169,6 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
 
     let refs = path_info.refs.clone();
     if !path_info.refs.is_empty() {
-        // TODO(conni2461): This is kinda ugly find a better solution
         res.references = path_info
             .refs
             .into_iter()
@@ -189,7 +177,7 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
                     .file_name()
                     .ok_or("could not get file_name of path")?
                     .to_str()
-                    .ok_or("os_str to str yeild a none")?
+                    .ok_or("os_str to str yield a none")?
                     .to_owned())
             })
             .filter_map(Result::ok)
@@ -202,7 +190,7 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
                 .file_name()
                 .ok_or("could not get file_name of path")?
                 .to_str()
-                .ok_or("os_str to str yeild a none")?
+                .ok_or("os_str to str yield a none")?
                 .into(),
         );
 
@@ -237,14 +225,13 @@ async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
     data: web::Data<Mutex<NarStore>>,
-    sign_key: web::Data<Mutex<Option<String>>>,
+    sign_key: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = match nixhash(&hash) {
         Some(v) => v,
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
-    let sign_key = sign_key.lock().expect("could not lock sign key");
     let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
     let mut nars = data.lock().expect("could not lock nars hashmap");
     nars.entry(
@@ -263,8 +250,8 @@ async fn get_narinfo(
     } else {
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
-            .append_header((header::CONTENT_TYPE, "text/x-nix-narinfo"))
-            .append_header(("Nix-Link", narinfo.url))
+            .insert_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
+            .insert_header(("Nix-Link", narinfo.url))
             .body(res))
     }
 }
@@ -286,52 +273,82 @@ async fn stream_nar(
         Some(v) => v,
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
-    let path_info = nixstore::query_path_info(&store_path, true)?;
-    let exported =
-        nixstore::export_path(&store_path, path_info.size).ok_or("Could not export path")?;
 
-    let mut length = exported.len();
+    let size = nixstore::query_path_info(&store_path, true)?.size;
+    let mut rlength = size;
     let mut offset = 0;
-
     let mut res = HttpResponse::Ok();
 
     // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
-    if let Some(ranges) = req.headers().get(header::RANGE) {
+    if let Some(ranges) = req.headers().get(http::header::RANGE) {
         if let Ok(ranges_header) = ranges.to_str() {
-            if let Ok(ranges) = HttpRange::parse(ranges_header, length) {
-                length = ranges[0].length;
+            if let Ok(ranges) = HttpRange::parse(ranges_header, rlength) {
+                rlength = ranges[0].length;
                 offset = ranges[0].start;
 
                 // don't allow compression middleware to modify partial content
                 res.insert_header((
-                    header::CONTENT_ENCODING,
-                    header::HeaderValue::from_static("identity"),
+                    http::header::CONTENT_ENCODING,
+                    http::header::HeaderValue::from_static("identity"),
                 ));
 
                 res.insert_header((
-                    header::CONTENT_RANGE,
-                    format!(
-                        "bytes {}-{}/{}",
-                        offset,
-                        offset + length - 1,
-                        exported.len()
-                    ),
+                    http::header::CONTENT_RANGE,
+                    format!("bytes {}-{}/{}", offset, offset + rlength - 1, size,),
                 ));
             } else {
-                res.insert_header((header::CONTENT_RANGE, format!("bytes */{}", length)));
-                return Ok(res.status(StatusCode::RANGE_NOT_SATISFIABLE).finish());
+                res.insert_header((http::header::CONTENT_RANGE, format!("bytes */{}", rlength)));
+                return Ok(res.status(http::StatusCode::RANGE_NOT_SATISFIABLE).finish());
             };
         } else {
-            return Ok(res.status(StatusCode::BAD_REQUEST).finish());
+            return Ok(res.status(http::StatusCode::BAD_REQUEST).finish());
         };
     };
 
-    let bytes = web::Bytes::from(exported).slice(offset..(offset + length));
+    let mut child = Command::new("nix-store")
+        .arg("--dump")
+        .arg(&store_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+
+    let (tx, rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
+    let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let mut reader = BufReader::new(child.stdout.take().ok_or("")?);
+    actix_web::rt::spawn(async move {
+        let mut send = 0;
+        while let Ok(bytes) = reader.fill_buf().await {
+            if bytes.is_empty() {
+                break;
+            }
+
+            let length = bytes.len();
+            if offset <= send + length {
+                let bytes = bytes.to_vec();
+                let start = if offset > send { offset - send } else { 0 };
+                let end = if (offset + rlength) < (send + length) {
+                    start + rlength
+                } else {
+                    length
+                };
+                reader.consume(length);
+                send += end;
+                let res = tx.send(Ok(web::Bytes::from(bytes).slice(start..end)));
+                if res.is_err() || end != length {
+                    child.start_kill().expect("Trying to kill child process");
+                    break;
+                }
+            } else {
+                send += length;
+                reader.consume(length);
+            }
+        }
+    });
 
     Ok(res
-        .append_header((header::CONTENT_TYPE, "application/x-nix-archive"))
-        .append_header((header::ACCEPT_RANGES, "bytes"))
-        .body(bytes))
+        .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
+        .insert_header((http::header::ACCEPT_RANGES, "bytes"))
+        .body(actix_web::body::SizedStream::new(rlength as u64, rx)))
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -345,16 +362,15 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
             None => return Ok(HttpResponse::NotFound().finish()),
         };
         return Ok(HttpResponse::Ok()
-            .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
+            .insert_header(http::header::ContentType(mime::TEXT_PLAIN_UTF_8))
             .body(build_log));
     }
     Ok(HttpResponse::NotFound().finish())
 }
 
-async fn index(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
-    let config = config.lock().expect("could not lock config");
+async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
-        .insert_header(header::ContentType(mime::TEXT_HTML_UTF_8))
+        .insert_header(http::header::ContentType(mime::TEXT_HTML_UTF_8))
         .body(format!(
             r#"
 <!DOCTYPE html>
@@ -419,10 +435,9 @@ async fn version() -> Result<HttpResponse, Box<dyn Error>> {
     )))
 }
 
-async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Box<dyn Error>> {
-    let config = config.lock().expect("could not lock config");
+async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
-        .append_header((header::CONTENT_TYPE, "text/x-nix-cache-info"))
+        .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
                 format!(
@@ -438,16 +453,25 @@ async fn cache_info(config: web::Data<Mutex<Config>>) -> Result<HttpResponse, Bo
 }
 
 fn init_config() -> Result<Config, Box<dyn Error>> {
-    Ok(Config::builder()
+    let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
+
+    let mut builder = Config::builder()
         .set_default("bind", "127.0.0.1:8080")?
         .set_default("workers", 4)?
         .set_default("max_connection_rate", 256)?
         .set_default("priority", 30)?
-        .set_default::<_, Option<String>>("sign_key_path", None)?
-        .add_source(config::File::with_name(
-            &std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned()),
-        ))
-        .build()?)
+        .set_default::<_, Option<String>>("sign_key_path", None)?;
+
+    if Path::new(&settings_file).exists() {
+        builder = builder.add_source(config::File::with_name(&settings_file))
+    } else {
+        log::warn!(
+            "Config file {} was not found. Using default values",
+            settings_file
+        )
+    }
+
+    Ok(builder.build()?)
 }
 
 fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn Error>> {
@@ -458,7 +482,7 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
             .ok_or("Sign key does not contain a ':'")?;
         let sign_keyno64 = base64::decode(sign_key64)?;
         if sign_keyno64.len() != 64 {
-            error!("invalid signing key provided. signing disabled");
+            log::error!("invalid signing key provided. signing disabled");
         } else {
             return Ok(Some(sign_key.to_owned()));
         }
@@ -468,12 +492,12 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config = init_config().expect("Could not parse config file");
-
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,actix_web=debug"),
     )
     .init();
+
+    let config = init_config().expect("Could not parse config file");
     let bind = config
         .get::<String>("bind")
         .expect("No hostname to bind on set");
@@ -490,13 +514,13 @@ async fn main() -> std::io::Result<()> {
         .expect("Unexpected error while extracting the secret key");
 
     let narstore_data = web::Data::new(Mutex::new(NarStore::new()));
-    let conf_data = web::Data::new(Mutex::new(config));
-    let secret_key_data = web::Data::new(Mutex::new(secret_key));
+    let conf_data = web::Data::new(config);
+    let secret_key_data = web::Data::new(secret_key);
 
-    info!("listening on {}", bind);
+    log::info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(middleware::Logger::default())
             .app_data(narstore_data.clone())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())

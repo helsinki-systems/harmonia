@@ -2,23 +2,23 @@
 name = "harmonia"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/conni2461/harmonia"
+repository = "https://github.com/helsinki-systems/harmonia"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-rt = "2.7"
 actix-web = "4.0"
 log = "0.4"
 env_logger = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-anyhow = "1.0"
-config = "0.12"
-derive_more = "0.99"
-http-range = "0.1"
+config = "0"
 mime = "0.3"
 base64 = "0.13"
+futures = "0.3"
+tokio = { version = "1", features = ["process", "sync"] }
+tokio-stream = "0.1"
+http-range = "0.1"
 
 [build-dependencies]
 cc = "1.0"
