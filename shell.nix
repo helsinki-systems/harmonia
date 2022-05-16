@@ -3,7 +3,7 @@ stdenv.mkDerivation {
   name = "harmonia";
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
-    nix_2_7
+    nix
     nlohmann_json
     libsodium
     boost
