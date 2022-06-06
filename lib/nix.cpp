@@ -3,6 +3,7 @@
 #include <nix/derivations.hh>
 #include <nix/globals.hh>
 #include <nix/store-api.hh>
+#include <nix/log-store.hh>
 #include <nix/content-address.hh>
 #include <nix/util.hh>
 #include <nix/crypto.hh>
@@ -429,17 +430,23 @@ const char *nix_get_build_log(const char *derivation_path) {
     auto b = to_derived_path(path);
 
     for (auto &sub : subs) {
-      auto log = std::visit(overloaded{
-                                [&](const nix::DerivedPath::Opaque &bo) {
-                                  return sub->getBuildLog(bo.path);
-                                },
-                                [&](const nix::DerivedPath::Built &bfd) {
-                                  return sub->getBuildLog(bfd.drvPath);
-                                },
-                            },
-                            b.raw());
-      if (!log)
+      nix::LogStore *log_store = dynamic_cast<nix::LogStore *>(&*sub);
+      if (!log_store) {
         continue;
+      }
+      std::optional<std::string> log =
+          std::visit(overloaded{
+                         [&](const nix::DerivedPath::Opaque &bo) {
+                           return log_store->getBuildLog(bo.path);
+                         },
+                         [&](const nix::DerivedPath::Built &bfd) {
+                           return log_store->getBuildLog(bfd.drvPath);
+                         },
+                     },
+                     b.raw());
+      if (!log) {
+        continue;
+      }
       return str_dup(*log);
     }
   })
