@@ -3,10 +3,8 @@ mod nixstore;
 use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::{collections::HashMap, path::Path, sync::Mutex};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use std::{collections::HashMap, error::Error, path::Path};
+use tokio::{io::AsyncBufReadExt, io::BufReader, process, sync};
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -224,7 +222,7 @@ pub struct Param {
 async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
-    data: web::Data<Mutex<NarStore>>,
+    data: web::Data<sync::Mutex<NarStore>>,
     sign_key: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
@@ -233,7 +231,7 @@ async fn get_narinfo(
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
     let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
-    let mut nars = data.lock().expect("could not lock nars hashmap");
+    let mut nars = data.lock().await;
     nars.entry(
         narinfo
             .nar_hash
@@ -258,11 +256,11 @@ async fn get_narinfo(
 
 async fn stream_nar(
     nar_hash: web::Path<String>,
-    data: web::Data<Mutex<NarStore>>,
+    data: web::Data<sync::Mutex<NarStore>>,
     req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = match {
-        let nars = data.lock().expect("Could not lock nars hashmap");
+        let nars = data.lock().await;
         nars.get(&nar_hash.into_inner()).cloned()
     } {
         Some(v) => v,
@@ -305,14 +303,14 @@ async fn stream_nar(
         };
     };
 
-    let mut child = Command::new("nix-store")
+    let mut child = process::Command::new("nix-store")
         .arg("--dump")
         .arg(&store_path)
         .stdout(std::process::Stdio::piped())
         .spawn()?;
 
     let (tx, rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
+        sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
     let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     let mut reader = BufReader::new(child.stdout.take().ok_or("")?);
     actix_web::rt::spawn(async move {
@@ -513,7 +511,7 @@ async fn main() -> std::io::Result<()> {
     let secret_key = get_secret_key(sign_key_path.as_deref())
         .expect("Unexpected error while extracting the secret key");
 
-    let narstore_data = web::Data::new(Mutex::new(NarStore::new()));
+    let narstore_data = web::Data::new(sync::Mutex::new(NarStore::new()));
     let conf_data = web::Data::new(config);
     let secret_key_data = web::Data::new(secret_key);
 
