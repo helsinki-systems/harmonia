@@ -1,0 +1,13 @@
+[package]
+name = "libnixstore"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cxx = "1"
+
+[build-dependencies]
+cxx-build = "1"
+pkg-config = "0.3"

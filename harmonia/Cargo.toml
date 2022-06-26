@@ -1,0 +1,23 @@
+[package]
+name = "harmonia"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/helsinki-systems/harmonia"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = { version = "4", default-features = false, features = ["macros", "compress-zstd", "cookies"] }
+log = "0.4"
+env_logger = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+config = "0.*"
+mime = "0.3"
+base64 = "0.13"
+tokio = { version = "1", features = ["process", "sync"] }
+tokio-stream = { version = "0.1" }
+http-range = "0.1"
+
+libnixstore = { path = "../libnixstore" }
