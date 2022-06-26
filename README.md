@@ -33,6 +33,11 @@ is `info,actix_web=debug`. To only log errors use the following
 `RUST_LOG=error` and to only disable access logging, use
 `RUST_LOG=info,actix_web::middleware=error`
 
+## Run tests
+
+```bash
+nix-build -E 'with import <nixpkgs> {}; callPackage ./test.nix {nixpkgs = pkgs;}'
+```
 
 ## Inspiration
 
