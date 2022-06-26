@@ -1,5 +1,3 @@
-mod nixstore;
-
 use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::Config;
 use serde::{Deserialize, Serialize};
@@ -43,7 +41,7 @@ fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
         return None;
     }
-    nixstore::query_path_from_hash_part(hash)
+    libnixstore::query_path_from_hash_part(hash)
 }
 
 fn query_drv_path(drv: &str) -> Option<String> {
@@ -51,7 +49,7 @@ fn query_drv_path(drv: &str) -> Option<String> {
     if drv.len() != 32 {
         return None;
     }
-    nixstore::query_path_from_hash_part(drv)
+    libnixstore::query_path_from_hash_part(drv)
 }
 
 #[derive(Debug, Serialize)]
@@ -109,7 +107,7 @@ fn fingerprint_path(
     nar_size: usize,
     refs: &[String],
 ) -> Result<Option<String>, Box<dyn Error>> {
-    let root_store_dir = nixstore::get_store_dir().ok_or("could not get nixstore dir")?;
+    let root_store_dir = libnixstore::get_store_dir();
     if store_path[0..root_store_dir.len()] != root_store_dir {
         return Ok(None);
     }
@@ -119,9 +117,10 @@ fn fingerprint_path(
 
     let mut nar_hash = nar_hash.to_owned();
     if nar_hash.len() == 71 {
-        let con = nixstore::convert_hash("sha256", &nar_hash[7..], true)
-            .ok_or("could not convert nar_hash to sha256")?;
-        nar_hash = format!("sha256:{}", con);
+        nar_hash = format!(
+            "sha256:{}",
+            libnixstore::convert_hash("sha256", &nar_hash[7..], true)?
+        );
     }
 
     if nar_hash.len() != 59 {
@@ -144,7 +143,7 @@ fn fingerprint_path(
 }
 
 fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
-    let path_info = nixstore::query_path_info(store_path, true)?;
+    let path_info = libnixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
         store_path: store_path.into(),
         url: format!(
@@ -192,9 +191,8 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
                 .into(),
         );
 
-        if nixstore::is_valid_path(&drv)? {
-            let drvpath = nixstore::derivation_from_path(&drv)?;
-            res.system = Some(drvpath.platform);
+        if libnixstore::is_valid_path(&drv) {
+            res.system = Some(libnixstore::derivation_from_path(&drv)?.platform);
         }
     }
 
@@ -205,7 +203,7 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
     if let Some(sk) = sign_key {
         let fingerprint = fingerprint_path(store_path, &res.nar_hash, res.nar_size, &refs)?;
         if let Some(fp) = fingerprint {
-            res.sig = nixstore::sign_string(sk, &fp);
+            res.sig = Some(libnixstore::sign_string(sk, &fp)?);
         }
     }
 
@@ -272,7 +270,7 @@ async fn stream_nar(
         None => return Ok(HttpResponse::NotFound().body("missed hash")),
     };
 
-    let size = nixstore::query_path_info(&store_path, true)?.size;
+    let size = libnixstore::query_path_info(&store_path, true)?.size;
     let mut rlength = size;
     let mut offset = 0;
     let mut res = HttpResponse::Ok();
@@ -354,8 +352,8 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
         Some(v) => v,
         None => return Ok(HttpResponse::NotFound().finish()),
     };
-    if nixstore::is_valid_path(&drv_path)? {
-        let build_log = match nixstore::get_build_log(&drv_path) {
+    if libnixstore::is_valid_path(&drv_path) {
+        let build_log = match libnixstore::get_build_log(&drv_path) {
             Some(v) => v,
             None => return Ok(HttpResponse::NotFound().finish()),
         };
@@ -420,7 +418,7 @@ async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>
             name = env!("CARGO_PKG_NAME"),
             version = env!("CARGO_PKG_VERSION"),
             repo = env!("CARGO_PKG_REPOSITORY"),
-            store = nixstore::get_store_dir().ok_or("could not get nixstore dir")?,
+            store = libnixstore::get_store_dir(),
             priority = config.get::<usize>("priority")?,
         )))
 }
@@ -438,10 +436,7 @@ async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn E
         .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
-                format!(
-                    "StoreDir: {}",
-                    nixstore::get_store_dir().ok_or("could not get nixstore dir")?
-                ),
+                format!("StoreDir: {}", libnixstore::get_store_dir(),),
                 "WantMassQuery: 1".to_owned(),
                 format!("Priority: {}", config.get::<usize>("priority")?),
                 "".to_owned(),
@@ -495,6 +490,8 @@ async fn main() -> std::io::Result<()> {
     )
     .init();
 
+    libnixstore::init();
+
     let config = init_config().expect("Could not parse config file");
     let bind = config
         .get::<String>("bind")
@@ -519,6 +516,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
+            // .wrap(middleware::Compress::default())
             .app_data(narstore_data.clone())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
