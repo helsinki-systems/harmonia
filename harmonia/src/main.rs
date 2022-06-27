@@ -522,6 +522,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(secret_key_data.clone())
             .route("/", web::get().to(index))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
+            .route("/{hash}.narinfo", web::head().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/log/{drv}", web::get().to(get_build_log))
             .route("/version", web::get().to(version))
