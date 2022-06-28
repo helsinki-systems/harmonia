@@ -1,4 +1,8 @@
 fn main() {
+    if std::env::var("DOCS_RS").is_ok() {
+        return;
+    }
+
     cxx_build::bridge("src/lib.rs")
         .file("src/nix.cpp")
         .flag_if_supported("-std=c++17")
