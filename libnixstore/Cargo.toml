@@ -1,9 +1,12 @@
 [package]
 name = "libnixstore"
 version = "0.1.0"
+authors = ["Simon Hauser <simon.hauser@helsinki-systems.de>"]
+description = "Rust friendly bindings to nixos nix-store library"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+homepage = "https://github.com/helsinki-systems/harmonia"
+repository = "https://github.com/helsinki-systems/harmonia.git"
+license = "MIT"
 
 [dependencies]
 cxx = "1"

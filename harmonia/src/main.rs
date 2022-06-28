@@ -417,7 +417,7 @@ async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>
 "#,
             name = env!("CARGO_PKG_NAME"),
             version = env!("CARGO_PKG_VERSION"),
-            repo = env!("CARGO_PKG_REPOSITORY"),
+            repo = env!("CARGO_PKG_HOMEPAGE"),
             store = libnixstore::get_store_dir(),
             priority = config.get::<usize>("priority")?,
         )))

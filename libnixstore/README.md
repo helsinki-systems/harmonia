@@ -4,6 +4,8 @@ Is a library that provides simple access to your local nix store, based on c++
 bindings. It mimics the already available perl bindings but also adds bindings
 on top, that might be useful.
 
+Note: This project provides bindings, this makes the project automatically unsafe.
+
 ## Requirements
 
 It is only available for systems that have the nix package manager installed.
