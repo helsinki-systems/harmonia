@@ -7,7 +7,7 @@ rustPlatform.buildRustPackage rec {
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    nixVersions.nix_2_8
+    nixVersions.nix_2_9
     nlohmann_json
     libsodium
     boost

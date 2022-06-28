@@ -6,6 +6,10 @@ on top, that might be useful.
 
 Note: This project provides bindings, this makes the project automatically unsafe.
 
+Supported nix version:
+- nix 2.8
+- nix 2.9
+
 ## Requirements
 
 It is only available for systems that have the nix package manager installed.
@@ -18,7 +22,7 @@ stdenv.mkDerivation {
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
     # required
-    nix
+    nixVersions.nix_2_9
     nlohmann_json
     libsodium
     boost
