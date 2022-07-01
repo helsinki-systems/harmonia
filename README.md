@@ -1,5 +1,13 @@
 # harmonia
 
+## Features
+
+- http-ranges support for nar file streaming
+- streaming build logs
+- .ls file streaming
+  - Note: doesn't contain `narOffset` in json response but isn't needed for
+    `nix-index`
+
 ## Build
 
 ### Whole application
