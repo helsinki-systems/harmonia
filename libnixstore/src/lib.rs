@@ -77,6 +77,7 @@ mod ffi {
 
         // additional but useful for harmonia
         fn get_build_log(derivation_path: &str) -> Result<String>;
+        fn get_nar_list(store_path: &str) -> Result<String>;
     }
 }
 
@@ -331,4 +332,9 @@ pub fn get_build_log(derivation_path: &str) -> Option<String> {
         Ok(v) => string_to_opt(v),
         Err(_) => None,
     }
+}
+
+#[inline]
+pub fn get_nar_list(store_path: &str) -> Result<String, cxx::Exception> {
+    ffi::get_nar_list(store_path)
 }

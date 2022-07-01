@@ -36,4 +36,5 @@ rust::String get_bin_dir();
 rust::String get_store_dir();
 
 rust::String get_build_log(rust::Str derivation_path);
+rust::String get_nar_list(rust::Str store_path);
 } // namespace libnixstore

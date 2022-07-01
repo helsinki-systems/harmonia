@@ -364,6 +364,16 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
     Ok(HttpResponse::NotFound().finish())
 }
 
+async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
+    let store_path = match nixhash(&hash) {
+        Some(v) => v,
+        None => return Ok(HttpResponse::NotFound().body("missed hash")),
+    };
+    Ok(HttpResponse::Ok()
+        .content_type(http::header::ContentType::json())
+        .body(libnixstore::get_nar_list(&store_path)?))
+}
+
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
         .insert_header(http::header::ContentType(mime::TEXT_HTML_UTF_8))
@@ -521,6 +531,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
             .route("/", web::get().to(index))
+            .route("/{hash}.ls", web::get().to(get_nar_list))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/{hash}.narinfo", web::head().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
