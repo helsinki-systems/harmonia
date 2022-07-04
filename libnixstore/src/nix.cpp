@@ -1,23 +1,7 @@
 #include "libnixstore/include/nix.h"
 
-#include <nix/config.h>
-#include <nix/derivations.hh>
-#include <nix/globals.hh>
-#include <nix/store-api.hh>
-#include <nix/log-store.hh>
-#include <nix/content-address.hh>
-#include <nix/util.hh>
-#include <nix/crypto.hh>
-
-#include <nix/nar-accessor.hh>
-#include <nix/json.hh>
-
 #include <nlohmann/json.hpp>
 #include <sodium.h>
-
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
 // C++17 std::visit boilerplate
 template <class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
@@ -309,6 +293,10 @@ rust::String get_bin_dir() {
 
 rust::String get_store_dir() {
   return nix::settings.nixStore;
+}
+
+bool is_experimental_feature_enabled(nix::ExperimentalFeature feature) {
+  return nix::settings.isExperimentalFeatureEnabled(feature);
 }
 
 rust::String get_build_log(rust::Str derivation_path) {
