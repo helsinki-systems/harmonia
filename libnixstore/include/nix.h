@@ -1,5 +1,16 @@
 #pragma once
 
+#include <nix/config.h>
+#include <nix/derivations.hh>
+#include <nix/globals.hh>
+#include <nix/store-api.hh>
+#include <nix/log-store.hh>
+#include <nix/content-address.hh>
+#include <nix/util.hh>
+#include <nix/crypto.hh>
+#include <nix/nar-accessor.hh>
+#include <nix/json.hh>
+
 #include "rust/cxx.h"
 #include "libnixstore/src/lib.rs.h"
 
@@ -37,4 +48,6 @@ rust::String get_store_dir();
 
 rust::String get_build_log(rust::Str derivation_path);
 rust::String get_nar_list(rust::Str store_path);
+
+bool is_experimental_feature_enabled(nix::ExperimentalFeature feature_name);
 } // namespace libnixstore
