@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, path::Path};
 use tokio::{io::AsyncBufReadExt, io::BufReader, process, sync};
 
+use libnixstore::ExperimentalFeature;
+
 // TODO(conni2461): conf file
 // - users to restrict access
 
@@ -249,6 +251,20 @@ async fn get_narinfo(
             .insert_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
             .insert_header(("Nix-Link", narinfo.url))
             .body(res))
+    }
+}
+
+async fn get_realisation(id: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
+    let realisation = match libnixstore::query_raw_realisation(&id) {
+        Some(r) => r,
+        None => return Ok(HttpResponse::NotFound().body("realisation not found")),
+    };
+    if realisation.is_empty() {
+        Ok(HttpResponse::NotFound().body("realisation not found"))
+    } else {
+        Ok(HttpResponse::Ok()
+            .insert_header((http::header::CONTENT_TYPE, "application/json"))
+            .body(realisation))
     }
 }
 
@@ -521,10 +537,18 @@ async fn main() -> std::io::Result<()> {
     let narstore_data = web::Data::new(sync::Mutex::new(NarStore::new()));
     let conf_data = web::Data::new(config);
     let secret_key_data = web::Data::new(secret_key);
+    let ca_derivations = {
+        if libnixstore::is_experimental_feature_enabled(ExperimentalFeature::CaDerivations) {
+            log::info!("Enabling experimental ca-derivations feature");
+            true
+        } else {
+            false
+        }
+    };
 
     log::info!("listening on {}", bind);
     HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .wrap(middleware::Logger::default())
             // .wrap(middleware::Compress::default())
             .app_data(narstore_data.clone())
@@ -537,7 +561,13 @@ async fn main() -> std::io::Result<()> {
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/log/{drv}", web::get().to(get_build_log))
             .route("/version", web::get().to(version))
-            .route("/nix-cache-info", web::get().to(cache_info))
+            .route("/nix-cache-info", web::get().to(cache_info));
+
+        if ca_derivations {
+            app = app.route("/realisations/{id}.doi", web::get().to(get_realisation));
+        }
+
+        app
     })
     .workers(workers)
     .max_connection_rate(max_connection_rate)
