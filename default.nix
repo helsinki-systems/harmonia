@@ -16,7 +16,7 @@ rustPlatform.buildRustPackage rec {
 
   meta = with lib; {
     description = "Nix binary cache implemented in rust using libnix-store";
-    homepage = https://github.com/helsinki-systems/harmonia;
+    homepage = "https://github.com/helsinki-systems/harmonia";
     license = with licenses; [ mit ];
     maintainers = [ maintainers.conni2461 ];
     platforms = platforms.all;
