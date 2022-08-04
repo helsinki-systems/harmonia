@@ -1,6 +1,6 @@
 [package]
 name = "harmonia"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Simon Hauser <simon.hauser@helsinki-systems.de>"]
 edition = "2021"
 license = "MIT"

@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "harmonia"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "actix-web",
  "base64",
