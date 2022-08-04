@@ -1,5 +1,5 @@
 use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
-use config::Config;
+use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, path::Path};
 use tokio::{io::AsyncBufReadExt, io::BufReader, process, sync};
@@ -108,10 +108,7 @@ fn fingerprint_path(
     refs: &[String],
 ) -> Result<Option<String>, Box<dyn Error>> {
     let root_store_dir = libnixstore::get_store_dir();
-    if store_path[0..root_store_dir.len()] != root_store_dir {
-        return Ok(None);
-    }
-    if &nar_hash[0..7] != "sha256:" {
+    if store_path[0..root_store_dir.len()] != root_store_dir || &nar_hash[0..7] != "sha256:" {
         return Ok(None);
     }
 
@@ -142,6 +139,13 @@ fn fingerprint_path(
     )))
 }
 
+fn extract_filename(path: &str) -> Option<String> {
+    match Path::new(path).file_name() {
+        Some(v) => v.to_str().map(|v| v.to_owned()),
+        None => None,
+    }
+}
+
 fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
     let path_info = libnixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
@@ -157,11 +161,11 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
         compression: "none".into(),
         nar_hash: path_info.narhash,
         nar_size: path_info.size,
-        references: Vec::<String>::new(),
+        references: vec![],
         deriver: None,
         system: None,
         sig: None,
-        ca: None,
+        ca: path_info.ca,
     };
 
     let refs = path_info.refs.clone();
@@ -169,35 +173,16 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
         res.references = path_info
             .refs
             .into_iter()
-            .map(|r| -> Result<String, Box<dyn Error>> {
-                Ok(Path::new(&r)
-                    .file_name()
-                    .ok_or("could not get file_name of path")?
-                    .to_str()
-                    .ok_or("os_str to str yield a none")?
-                    .to_owned())
-            })
-            .filter_map(Result::ok)
+            .filter_map(|r| extract_filename(&r))
             .collect::<Vec<String>>();
     }
 
     if let Some(drv) = path_info.drv {
-        res.deriver = Some(
-            Path::new(&drv)
-                .file_name()
-                .ok_or("could not get file_name of path")?
-                .to_str()
-                .ok_or("os_str to str yield a none")?
-                .into(),
-        );
+        res.deriver = extract_filename(&drv);
 
         if libnixstore::is_valid_path(&drv) {
             res.system = Some(libnixstore::derivation_from_path(&drv)?.platform);
         }
-    }
-
-    if let Some(ca) = path_info.ca {
-        res.ca = Some(ca);
     }
 
     if let Some(sk) = sign_key {
@@ -208,6 +193,15 @@ fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Bo
     }
 
     Ok(res)
+}
+
+macro_rules! some_or_404 {
+    ($res:expr) => {
+        match $res {
+            Some(val) => val,
+            None => return Ok(HttpResponse::NotFound().body("missed hash")),
+        }
+    };
 }
 
 type NarStore = HashMap<String, String>;
@@ -224,10 +218,7 @@ async fn get_narinfo(
     sign_key: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
-    let store_path = match nixhash(&hash) {
-        Some(v) => v,
-        None => return Ok(HttpResponse::NotFound().body("missed hash")),
-    };
+    let store_path = some_or_404!(nixhash(&hash));
     let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
     let mut nars = data.lock().await;
     nars.entry(
@@ -257,18 +248,11 @@ async fn stream_nar(
     data: web::Data<sync::Mutex<NarStore>>,
     req: HttpRequest,
 ) -> Result<HttpResponse, Box<dyn Error>> {
-    let hash = match {
+    let hash = some_or_404!({
         let nars = data.lock().await;
         nars.get(&nar_hash.into_inner()).cloned()
-    } {
-        Some(v) => v,
-        None => return Ok(HttpResponse::NotFound().body("missed hash")),
-    };
-
-    let store_path = match nixhash(&hash) {
-        Some(v) => v,
-        None => return Ok(HttpResponse::NotFound().body("missed hash")),
-    };
+    });
+    let store_path = some_or_404!(nixhash(&hash));
 
     let size = libnixstore::query_path_info(&store_path, true)?.size;
     let mut rlength = size;
@@ -348,15 +332,9 @@ async fn stream_nar(
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
-    let drv_path = match query_drv_path(&drv) {
-        Some(v) => v,
-        None => return Ok(HttpResponse::NotFound().finish()),
-    };
+    let drv_path = some_or_404!(query_drv_path(&drv));
     if libnixstore::is_valid_path(&drv_path) {
-        let build_log = match libnixstore::get_build_log(&drv_path) {
-            Some(v) => v,
-            None => return Ok(HttpResponse::NotFound().finish()),
-        };
+        let build_log = some_or_404!(libnixstore::get_build_log(&drv_path));
         return Ok(HttpResponse::Ok()
             .insert_header(http::header::ContentType(mime::TEXT_PLAIN_UTF_8))
             .body(build_log));
@@ -365,13 +343,8 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
 }
 
 async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
-    let store_path = match nixhash(&hash) {
-        Some(v) => v,
-        None => return Ok(HttpResponse::NotFound().body("missed hash")),
-    };
-    Ok(HttpResponse::Ok()
-        .content_type(http::header::ContentType::json())
-        .body(libnixstore::get_nar_list(&store_path)?))
+    let store_path = some_or_404!(nixhash(&hash));
+    Ok(HttpResponse::Ok().json(libnixstore::get_nar_list(&store_path)?))
 }
 
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -446,7 +419,7 @@ async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn E
         .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
-                format!("StoreDir: {}", libnixstore::get_store_dir(),),
+                format!("StoreDir: {}", libnixstore::get_store_dir()),
                 "WantMassQuery: 1".to_owned(),
                 format!("Priority: {}", config.get::<usize>("priority")?),
                 "".to_owned(),
@@ -455,7 +428,7 @@ async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn E
         ))
 }
 
-fn init_config() -> Result<Config, Box<dyn Error>> {
+fn init_config() -> Result<Config, ConfigError> {
     let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
 
     let mut builder = Config::builder()
@@ -474,7 +447,7 @@ fn init_config() -> Result<Config, Box<dyn Error>> {
         )
     }
 
-    Ok(builder.build()?)
+    builder.build()
 }
 
 fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn Error>> {
