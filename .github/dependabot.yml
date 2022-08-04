@@ -6,4 +6,3 @@ updates:
       interval: weekly
     reviewers:
       - Conni2461
-    auto-merge: true
