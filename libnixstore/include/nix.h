@@ -7,7 +7,9 @@ namespace libnixstore {
 void init();
 void set_verbosity(int32_t level);
 bool is_valid_path(rust::Str path);
-rust::Vec<rust::String> query_references(rust::Str path);
+void query_references(
+    rust::Str path, rust::Box<ReferencesCtx> ctx,
+    rust::Fn<bool(rust::Box<ReferencesCtx> ctx, rust::Box<ReferencesRet> ret)> send);
 rust::String query_path_hash(rust::Str path);
 rust::String query_deriver(rust::Str path);
 InternalPathInfo query_path_info(rust::Str path, bool base32);

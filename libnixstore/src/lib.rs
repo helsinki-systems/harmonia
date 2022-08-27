@@ -8,8 +8,50 @@
 )]
 #![forbid(non_ascii_idents)]
 
+#[derive(Debug)]
+pub enum NixErr {
+    Exception(String),
+    Receiver(tokio::sync::oneshot::error::RecvError),
+}
+
+impl std::fmt::Display for NixErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NixErr::Receiver(e) => write!(f, "{}", e),
+            NixErr::Exception(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for NixErr {}
+
+impl From<cxx::Exception> for NixErr {
+    fn from(err: cxx::Exception) -> Self {
+        NixErr::Exception(err.what().to_owned())
+    }
+}
+
+pub enum ReferencesRet {
+    Ok(Vec<String>),
+    Err(String),
+}
+fn new_references_ok(v: Vec<String>) -> Box<ReferencesRet> {
+    Box::new(ReferencesRet::Ok(v))
+}
+fn new_references_err(msg: String) -> Box<ReferencesRet> {
+    Box::new(ReferencesRet::Err(msg))
+}
+pub struct ReferencesCtx(tokio::sync::oneshot::Sender<ReferencesRet>);
+
 #[cxx::bridge(namespace = "libnixstore")]
 mod ffi {
+    extern "Rust" {
+        type ReferencesRet;
+        fn new_references_ok(v: Vec<String>) -> Box<ReferencesRet>;
+        fn new_references_err(msg: String) -> Box<ReferencesRet>;
+        type ReferencesCtx;
+    }
+
     struct InternalPathInfo {
         drv: String,
         narhash: String,
@@ -42,7 +84,12 @@ mod ffi {
         fn init();
         fn set_verbosity(level: i32);
         fn is_valid_path(path: &str) -> Result<bool>;
-        fn query_references(path: &str) -> Result<Vec<String>>;
+        fn query_references(
+            path: &str,
+            ctx: Box<ReferencesCtx>,
+            send: fn(Box<ReferencesCtx>, ret: Box<ReferencesRet>) -> bool,
+        ) -> Result<()>;
+
         fn query_path_hash(path: &str) -> Result<String>;
         fn query_deriver(path: &str) -> Result<String>;
         fn query_path_info(path: &str, base32: bool) -> Result<InternalPathInfo>;
@@ -78,7 +125,11 @@ mod ffi {
         // additional but useful for harmonia
         fn get_build_log(derivation_path: &str) -> Result<String>;
         fn get_nar_list(store_path: &str) -> Result<String>;
-        fn dump_path(store_part: &str, callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool, user_data: usize);
+        fn dump_path(
+            store_part: &str,
+            callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool,
+            user_data: usize,
+        );
     }
 }
 
@@ -130,8 +181,16 @@ pub fn is_valid_path(path: &str) -> bool {
 
 #[inline]
 /// Return references of a valid path. It is permitted to omit the name part of the store path.
-pub fn query_references(path: &str) -> Result<Vec<String>, cxx::Exception> {
-    ffi::query_references(path)
+pub async fn query_references(path: &str) -> Result<Vec<String>, NixErr> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    ffi::query_references(path, Box::new(ReferencesCtx(tx)), |ctx, ret| {
+        ctx.0.send(*ret).is_ok()
+    })?;
+    match rx.await {
+        Ok(ReferencesRet::Ok(res)) => Ok(res),
+        Ok(ReferencesRet::Err(msg)) => Err(NixErr::Exception(msg)),
+        Err(e) => Err(NixErr::Receiver(e)),
+    }
 }
 
 #[inline]
@@ -353,8 +412,25 @@ where
 /// Dump a store path in NAR format. The data is passed in chunks to callback
 pub fn dump_path<F>(store_path: &str, callback: F)
 where
-    F: FnMut(&[u8]) -> bool
-
+    F: FnMut(&[u8]) -> bool,
 {
-    ffi::dump_path(store_path, dump_path_trampoline::<F>, &callback as *const _ as *const std::ffi::c_void as usize);
+    ffi::dump_path(
+        store_path,
+        dump_path_trampoline::<F>,
+        &callback as *const _ as *const std::ffi::c_void as usize,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_test_pkg() -> String {
+        std::env::var("TEST_NIXPKG").expect("nix pkg path needs to be set in TEST_NIXPKG env var")
+    }
+
+    #[tokio::test]
+    async fn async_binding() {
+        assert!(query_references(&get_test_pkg()).await.unwrap().len() > 0);
+    }
 }

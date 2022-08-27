@@ -8,6 +8,7 @@
 #include <nix/content-address.hh>
 #include <nix/util.hh>
 #include <nix/crypto.hh>
+#include <nix/callback.hh>
 
 #include <nix/nar-accessor.hh>
 #include <nix/json.hh>
@@ -18,6 +19,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <future>
 
 // C++17 std::visit boilerplate
 template <class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
@@ -64,16 +67,27 @@ bool is_valid_path(rust::Str path) {
   return store()->isValidPath(store()->parseStorePath(STRING_VIEW(path)));
 }
 
-rust::Vec<rust::String> nix_query_references(rust::Str path) {
-  auto refs = store()
-                  ->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)))
-                  ->references;
-  rust::Vec<rust::String> res;
-  res.reserve(refs.size());
-  for (const nix::StorePath &ref : refs) {
-    res.push_back(store()->printStorePath(ref));
-  }
-  return res;
+void query_references(
+    rust::Str path, rust::Box<ReferencesCtx> ctx,
+    rust::Fn<bool(rust::Box<ReferencesCtx>, rust::Box<ReferencesRet>)> send) {
+  nix::Callback<nix::ref<const nix::ValidPathInfo>> cb = {
+      [&ctx, &send](std::future<nix::ref<const nix::ValidPathInfo>> fut) {
+        try {
+          auto refs = fut.get()->references;
+          rust::Vec<rust::String> data;
+          data.reserve(refs.size());
+          for (const nix::StorePath &ref : refs) {
+            data.push_back(store()->printStorePath(ref));
+          }
+          (*send)(std::move(ctx),
+                  std::move(new_references_ok(std::move(data))));
+        } catch (const std::exception &e) {
+          (*send)(std::move(ctx), std::move(new_references_err(e.what())));
+        }
+      }};
+
+  store()->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)),
+                         std::move(cb));
 }
 
 rust::String query_path_hash(rust::Str path) {

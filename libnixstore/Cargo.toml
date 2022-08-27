@@ -10,10 +10,14 @@ license = "MIT"
 
 [dependencies]
 cxx = "1"
+tokio = { version = "1", features = ["sync"] }
 
 [build-dependencies]
 cxx-build = "1"
 pkg-config = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
 
 [lib]
 doctest = false
