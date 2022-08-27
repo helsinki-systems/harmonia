@@ -1,6 +1,12 @@
 name: Continuous Integration
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
   build:
@@ -10,14 +16,14 @@ jobs:
 
     strategy:
       matrix:
-        nixpkgs: [ nixos-22.05, nixos-unstable ]
+        nixpkgs: [nixos-22.05, nixos-unstable]
 
     steps:
-    - uses: actions/checkout@v2
-    - uses: cachix/install-nix-action@v15
-      with:
-        nix_path: nixpkgs=channel:${{ matrix.nixpkgs }}
-        extra_nix_config: "system-features = nixos-test benchmark big-parallel kvm"
+      - uses: actions/checkout@v2
+      - uses: cachix/install-nix-action@v15
+        with:
+          nix_path: nixpkgs=channel:${{ matrix.nixpkgs }}
+          extra_nix_config: "system-features = nixos-test benchmark big-parallel kvm"
 
-    - name: nix-build (for ${{ matrix.nixpkgs }})
-      run: nix-build -E 'with import <nixpkgs> {}; callPackage ./test.nix {nixpkgs = pkgs;}'
+      - name: nix-build (for ${{ matrix.nixpkgs }})
+        run: nix-build -E 'with import <nixpkgs> {}; callPackage ./test.nix {nixpkgs = pkgs;}'
