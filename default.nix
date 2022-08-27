@@ -14,6 +14,8 @@ rustPlatform.buildRustPackage {
     openssl
   ];
 
+  dontCargoCheck = true;
+
   meta = with lib; {
     description = "Nix binary cache implemented in rust using libnix-store";
     homepage = "https://github.com/helsinki-systems/harmonia";
