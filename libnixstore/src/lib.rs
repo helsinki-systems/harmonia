@@ -9,8 +9,7 @@
 #![forbid(non_ascii_idents)]
 
 mod error;
-
-use crate::error::NixErr;
+pub use crate::error::NixErr;
 
 macro_rules! gen_async_ctx {
     ($name:ident, $t:ty) => {

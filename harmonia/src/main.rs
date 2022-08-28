@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, path::Path};
 use tokio::sync;
 
+use libnixstore as nix;
+
 // TODO(conni2461): conf file
 // - users to restrict access
 
@@ -41,15 +43,11 @@ fn nixhash(hash: &str) -> Option<String> {
     if hash.len() != 32 {
         return None;
     }
-    libnixstore::query_path_from_hash_part(hash)
+    nix::query_path_from_hash_part(hash)
 }
 
 fn query_drv_path(drv: &str) -> Option<String> {
-    let drv = if drv.len() > 32 { &drv[0..32] } else { drv };
-    if drv.len() != 32 {
-        return None;
-    }
-    libnixstore::query_path_from_hash_part(drv)
+    nixhash(if drv.len() > 32 { &drv[0..32] } else { drv })
 }
 
 #[derive(Debug, Serialize)]
@@ -106,8 +104,8 @@ fn fingerprint_path(
     nar_hash: &str,
     nar_size: usize,
     refs: &[String],
-) -> Result<Option<String>, Box<dyn Error>> {
-    let root_store_dir = libnixstore::get_store_dir();
+) -> Result<Option<String>, nix::NixErr> {
+    let root_store_dir = nix::get_store_dir();
     if store_path[0..root_store_dir.len()] != root_store_dir || &nar_hash[0..7] != "sha256:" {
         return Ok(None);
     }
@@ -116,7 +114,7 @@ fn fingerprint_path(
     if nar_hash.len() == 71 {
         nar_hash = format!(
             "sha256:{}",
-            libnixstore::convert_hash("sha256", &nar_hash[7..], true)?
+            nix::convert_hash("sha256", &nar_hash[7..], true)?
         );
     }
 
@@ -141,25 +139,24 @@ fn fingerprint_path(
 
 fn extract_filename(path: &str) -> Option<String> {
     match Path::new(path).file_name() {
-        Some(v) => v.to_str().map(|v| v.to_owned()),
+        Some(v) => v.to_str().map(ToOwned::to_owned),
         None => None,
     }
 }
 
-async fn query_narinfo(store_path: &str, hash: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
-    let path_info = libnixstore::query_path_info(store_path, true)?;
-    let path_info = libnixstore::query_path_info(store_path, true).await?;
+fn extract_hash(hash: &str) -> &str {
+    hash.split_once(':').map(|x| x.1).unwrap_or(hash)
+}
+
+async fn query_narinfo(
+    store_path: &str,
+    hash: &str,
+    sign_key: Option<&str>,
+) -> Result<NarInfo, Box<dyn Error>> {
+    let path_info = nix::query_path_info(store_path, true).await?;
     let mut res = NarInfo {
         store_path: store_path.into(),
-        url: format!(
-            "nar/{}.nar?hash={}",
-            path_info
-                .narhash
-                .split(':')
-                .nth(1)
-                .ok_or("Could not split hash on :")?,
-            hash
-        ),
+        url: format!("nar/{}.nar?hash={}", extract_hash(&path_info.narhash), hash),
         compression: "none".into(),
         nar_hash: path_info.narhash,
         nar_size: path_info.size,
@@ -182,15 +179,15 @@ async fn query_narinfo(store_path: &str, hash: &str, sign_key: Option<&str>) -> 
     if let Some(drv) = path_info.drv {
         res.deriver = extract_filename(&drv);
 
-        if libnixstore::is_valid_path(&drv) {
-            res.system = Some(libnixstore::derivation_from_path(&drv)?.platform);
+        if nix::is_valid_path(&drv) {
+            res.system = Some(nix::derivation_from_path(&drv)?.platform);
         }
     }
 
     if let Some(sk) = sign_key {
         let fingerprint = fingerprint_path(store_path, &res.nar_hash, res.nar_size, &refs)?;
         if let Some(fp) = fingerprint {
-            res.sig = Some(libnixstore::sign_string(sk, &fp)?);
+            res.sig = Some(nix::sign_string(sk, &fp)?);
         }
     }
 
@@ -233,17 +230,17 @@ async fn get_narinfo(
 
 #[derive(Debug, Deserialize)]
 pub struct NarRequest {
-   hash: String,
+    hash: String,
 }
 
 async fn stream_nar(
     _nar_hash: web::Path<String>,
     req: HttpRequest,
-    info: web::Query<NarRequest>
+    info: web::Query<NarRequest>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
-    let store_path = some_or_404!(libnixstore::query_path_from_hash_part(&info.hash));
+    let store_path = some_or_404!(nix::query_path_from_hash_part(&info.hash));
 
-    let size = libnixstore::query_path_info(&store_path, true).await?.size;
+    let size = nix::query_path_info(&store_path, true).await?.size;
     let mut rlength = size;
     let mut offset = 0;
     let mut res = HttpResponse::Ok();
@@ -289,14 +286,15 @@ async fn stream_nar(
             };
             // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
             let data = Vec::from(data);
-            tx.send(Ok(web::Bytes::from(data).slice(start..end))).is_ok()
+            tx.send(Ok(web::Bytes::from(data).slice(start..end)))
+                .is_ok()
         } else {
             send += length;
             true
         }
     };
 
-    libnixstore::dump_path(&store_path, closure);
+    nix::dump_path(&store_path, closure);
 
     Ok(res
         .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
@@ -306,8 +304,8 @@ async fn stream_nar(
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
     let drv_path = some_or_404!(query_drv_path(&drv));
-    if libnixstore::is_valid_path(&drv_path) {
-        let build_log = some_or_404!(libnixstore::get_build_log(&drv_path));
+    if nix::is_valid_path(&drv_path) {
+        let build_log = some_or_404!(nix::get_build_log(&drv_path));
         return Ok(HttpResponse::Ok()
             .insert_header(http::header::ContentType(mime::TEXT_PLAIN_UTF_8))
             .body(build_log));
@@ -317,7 +315,7 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
 
 async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(nixhash(&hash));
-    Ok(HttpResponse::Ok().json(libnixstore::get_nar_list(&store_path)?))
+    Ok(HttpResponse::Ok().json(nix::get_nar_list(&store_path)?))
 }
 
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -374,7 +372,7 @@ async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>
             name = env!("CARGO_PKG_NAME"),
             version = env!("CARGO_PKG_VERSION"),
             repo = env!("CARGO_PKG_HOMEPAGE"),
-            store = libnixstore::get_store_dir(),
+            store = nix::get_store_dir(),
             priority = config.get::<usize>("priority")?,
         )))
 }
@@ -392,7 +390,7 @@ async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn E
         .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
         .body(
             vec![
-                format!("StoreDir: {}", libnixstore::get_store_dir()),
+                format!("StoreDir: {}", nix::get_store_dir()),
                 "WantMassQuery: 1".to_owned(),
                 format!("Priority: {}", config.get::<usize>("priority")?),
                 "".to_owned(),
@@ -412,12 +410,12 @@ fn init_config() -> Result<Config, ConfigError> {
         .set_default::<_, Option<String>>("sign_key_path", None)?;
 
     if Path::new(&settings_file).exists() {
-        builder = builder.add_source(config::File::with_name(&settings_file))
+        builder = builder.add_source(config::File::with_name(&settings_file));
     } else {
         log::warn!(
             "Config file {} was not found. Using default values",
             settings_file
-        )
+        );
     }
 
     builder.build()
@@ -430,10 +428,10 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
             .split_once(':')
             .ok_or("Sign key does not contain a ':'")?;
         let sign_keyno64 = base64::decode(sign_key64)?;
-        if sign_keyno64.len() != 64 {
-            log::error!("invalid signing key provided. signing disabled");
+        if sign_keyno64.len() == 64 {
+            return Ok(Some(sign_key.clone()));
         } else {
-            return Ok(Some(sign_key.to_owned()));
+            log::error!("invalid signing key provided. signing disabled");
         }
     }
     Ok(None)
@@ -446,7 +444,7 @@ async fn main() -> std::io::Result<()> {
     )
     .init();
 
-    libnixstore::init();
+    nix::init();
 
     let config = init_config().expect("Could not parse config file");
     let bind = config
