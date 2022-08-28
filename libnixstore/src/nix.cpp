@@ -26,7 +26,7 @@
 template <class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
-static nix::ref<nix::Store> store() {
+static nix::ref<nix::Store> get_store() {
   static std::shared_ptr<nix::Store> _store;
   if (!_store) {
     nix::loadConfFile();
@@ -38,7 +38,7 @@ static nix::ref<nix::Store> store() {
 
 static nix::DerivedPath to_derived_path(const nix::StorePath &store_path) {
   if (store_path.isDerivation()) {
-    auto drv = store()->readDerivation(store_path);
+    auto drv = get_store()->readDerivation(store_path);
     return nix::DerivedPath::Built{
         .drvPath = store_path,
         .outputs = drv.outputNames(),
@@ -50,13 +50,34 @@ static nix::DerivedPath to_derived_path(const nix::StorePath &store_path) {
   }
 }
 
+static inline rust::String
+extract_opt_path(const std::optional<nix::StorePath> &v) {
+  if (!v) {
+    // TODO(conni2461): Replace with option
+    return "";
+  }
+  return get_store()->printStorePath(*v);
+}
+
+static inline rust::Vec<rust::String>
+extract_path_set(const nix::StorePathSet &set) {
+  auto store = get_store();
+
+  rust::Vec<rust::String> data;
+  data.reserve(set.size());
+  for (const nix::StorePath &path : set) {
+    data.push_back(store->printStorePath(path));
+  }
+  return data;
+}
+
 // shorthand to create std::string_view from rust::Str, we dont wan't to create
 // std::string because that involves allocating memory
 #define STRING_VIEW(rstr) std::string(rstr.data(), rstr.length())
 
 namespace libnixstore {
 void init() {
-  store();
+  get_store();
 }
 
 void set_verbosity(int32_t level) {
@@ -64,7 +85,8 @@ void set_verbosity(int32_t level) {
 }
 
 bool is_valid_path(rust::Str path) {
-  return store()->isValidPath(store()->parseStorePath(STRING_VIEW(path)));
+  auto store = get_store();
+  return store->isValidPath(store->parseStorePath(STRING_VIEW(path)));
 }
 
 void query_references(
@@ -73,52 +95,40 @@ void query_references(
   nix::Callback<nix::ref<const nix::ValidPathInfo>> cb = {
       [&ctx, &send](std::future<nix::ref<const nix::ValidPathInfo>> fut) {
         try {
-          auto refs = fut.get()->references;
-          rust::Vec<rust::String> data;
-          data.reserve(refs.size());
-          for (const nix::StorePath &ref : refs) {
-            data.push_back(store()->printStorePath(ref));
-          }
           (*send)(std::move(ctx),
-                  std::move(new_references_ok(std::move(data))));
+                  std::move(new_references_ok(
+                      std::move(extract_path_set(fut.get()->references)))));
         } catch (const std::exception &e) {
           (*send)(std::move(ctx), std::move(new_references_err(e.what())));
         }
       }};
 
-  store()->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)),
-                         std::move(cb));
+  auto store = get_store();
+  store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)), std::move(cb));
 }
 
 rust::String query_path_hash(rust::Str path) {
-  return store()
-      ->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)))
+  auto store = get_store();
+  return store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)))
       ->narHash.to_string(nix::Base32, true);
 }
 
 rust::String query_deriver(rust::Str path) {
+  auto store = get_store();
   nix::ref<const nix::ValidPathInfo> info =
-      store()->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)));
-  if (!info->deriver) {
-    // TODO(conni2461): Replace with option
-    return "";
-  }
-  return store()->printStorePath(*info->deriver);
+      store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)));
+  return extract_opt_path(info->deriver);
 }
 
 InternalPathInfo query_path_info(rust::Str path, bool base32) {
+  auto store = get_store();
   nix::ref<const nix::ValidPathInfo> info =
-      store()->queryPathInfo(store()->parseStorePath(STRING_VIEW(path)));
+      store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)));
 
   std::string narhash =
       info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
 
-  rust::Vec<rust::String> refs;
-  refs.reserve(info->references.size());
-  for (const nix::StorePath &ref : info->references) {
-    refs.push_back(store()->printStorePath(ref));
-  }
-
+  rust::Vec<rust::String> refs = extract_path_set(info->references);
   rust::Vec<rust::String> sigs;
   sigs.reserve(info->sigs.size());
   for (const std::string &sig : info->sigs) {
@@ -127,7 +137,7 @@ InternalPathInfo query_path_info(rust::Str path, bool base32) {
 
   // TODO(conni2461): Replace "" with option
   return InternalPathInfo{
-      info->deriver ? store()->printStorePath(*info->deriver) : "",
+      extract_opt_path(info->deriver),
       narhash,
       info->registrationTime,
       info->narSize,
@@ -139,7 +149,8 @@ InternalPathInfo query_path_info(rust::Str path, bool base32) {
 
 rust::String query_raw_realisation(rust::Str output_id) {
   std::shared_ptr<const nix::Realisation> realisation =
-      store()->queryRealisation(nix::DrvOutput::parse(STRING_VIEW(output_id)));
+      get_store()->queryRealisation(
+          nix::DrvOutput::parse(STRING_VIEW(output_id)));
   if (!realisation) {
     // TODO(conni2461): Replace with option
     return "";
@@ -148,63 +159,57 @@ rust::String query_raw_realisation(rust::Str output_id) {
 }
 
 rust::String query_path_from_hash_part(rust::Str hash_part) {
-  std::optional<nix::StorePath> path =
-      store()->queryPathFromHashPart(STRING_VIEW(hash_part));
-  if (!path) {
-    // TODO(conni2461): Replace with option
-    return "";
-  }
-  return store()->printStorePath(*path);
+  return extract_opt_path(
+      get_store()->queryPathFromHashPart(STRING_VIEW(hash_part)));
 }
 
 rust::Vec<rust::String> compute_fs_closure(bool flip_direction,
                                            bool include_outputs,
                                            rust::Vec<rust::Str> paths) {
+  auto store = get_store();
   nix::StorePathSet path_set;
   for (auto &path : paths) {
-    store()->computeFSClosure(store()->parseStorePath(STRING_VIEW(path)),
-                              path_set, flip_direction, include_outputs);
+    store->computeFSClosure(store->parseStorePath(STRING_VIEW(path)), path_set,
+                            flip_direction, include_outputs);
   }
-  rust::Vec<rust::String> res;
-  res.reserve(path_set.size());
-  for (auto &path : path_set) {
-    res.push_back(store()->printStorePath(path));
-  }
-  return res;
+  return extract_path_set(path_set);
 }
 
 rust::Vec<rust::String> topo_sort_paths(rust::Vec<rust::Str> paths) {
+  auto store = get_store();
   nix::StorePathSet path_set;
   for (auto &path : paths) {
-    path_set.insert(store()->parseStorePath(STRING_VIEW(path)));
+    path_set.insert(store->parseStorePath(STRING_VIEW(path)));
   }
-  nix::StorePaths sorted = store()->topoSortPaths(path_set);
+  nix::StorePaths sorted = store->topoSortPaths(path_set);
   rust::Vec<rust::String> res;
   res.reserve(sorted.size());
   for (auto &path : sorted) {
-    res.push_back(store()->printStorePath(path));
+    res.push_back(store->printStorePath(path));
   }
   return res;
 }
 
 rust::String follow_links_to_store_path(rust::Str path) {
-  return store()->printStorePath(
-      store()->followLinksToStorePath(STRING_VIEW(path)));
+  auto store = get_store();
+  return store->printStorePath(
+      store->followLinksToStorePath(STRING_VIEW(path)));
 }
 
 void export_paths(int32_t fd, rust::Vec<rust::Str> paths) {
+  auto store = get_store();
   nix::StorePathSet path_set;
   for (auto &path : paths) {
-    path_set.insert(store()->parseStorePath(STRING_VIEW(path)));
+    path_set.insert(store->parseStorePath(STRING_VIEW(path)));
   }
   nix::FdSink sink(fd);
-  store()->exportPaths(path_set, sink);
+  store->exportPaths(path_set, sink);
 }
 
 void import_paths(int32_t fd, bool dont_check_signs) {
   nix::FdSource source(fd);
-  store()->importPaths(source,
-                       dont_check_signs ? nix::NoCheckSigs : nix::CheckSigs);
+  get_store()->importPaths(source, dont_check_signs ? nix::NoCheckSigs
+                                                    : nix::CheckSigs);
 }
 
 rust::String hash_path(rust::Str algo, bool base32, rust::Str path) {
@@ -250,52 +255,50 @@ bool check_signature(rust::Str public_key, rust::Str sig, rust::Str msg) {
 
 rust::String add_to_store(rust::Str src_path, int32_t recursive,
                           rust::Str algo) {
+  auto store = get_store();
   nix::FileIngestionMethod method = recursive
                                         ? nix::FileIngestionMethod::Recursive
                                         : nix::FileIngestionMethod::Flat;
-  nix::StorePath path = store()->addToStore(
+  nix::StorePath path = store->addToStore(
       std::string(nix::baseNameOf(STRING_VIEW(src_path))),
       STRING_VIEW(src_path), method, nix::parseHashType(STRING_VIEW(algo)));
-  return store()->printStorePath(path);
+  return store->printStorePath(path);
 }
 
 rust::String make_fixed_output_path(bool recursive, rust::Str algo,
                                     rust::Str hash, rust::Str name) {
+  auto store = get_store();
   nix::Hash h = nix::Hash::parseAny(STRING_VIEW(hash),
                                     nix::parseHashType(STRING_VIEW(algo)));
   nix::FileIngestionMethod method = recursive
                                         ? nix::FileIngestionMethod::Recursive
                                         : nix::FileIngestionMethod::Flat;
   nix::StorePath path =
-      store()->makeFixedOutputPath(method, h, STRING_VIEW(name));
-  return store()->printStorePath(path);
+      store->makeFixedOutputPath(method, h, STRING_VIEW(name));
+  return store->printStorePath(path);
 }
 
 InternalDrv derivation_from_path(rust::Str drv_path) {
-  nix::Derivation drv = store()->derivationFromPath(
-      store()->parseStorePath(STRING_VIEW(drv_path)));
+  auto store = get_store();
+  nix::Derivation drv =
+      store->derivationFromPath(store->parseStorePath(STRING_VIEW(drv_path)));
 
-  auto oaop = drv.outputsAndOptPaths(*store());
+  auto oaop = drv.outputsAndOptPaths(*store);
   rust::Vec<InternalTuple> outputs;
   outputs.reserve(oaop.size());
   for (auto &i : oaop) {
     outputs.push_back(InternalTuple{
         i.first,
-        i.second.second ? store()->printStorePath(*i.second.second) : ""});
+        i.second.second ? store->printStorePath(*i.second.second) : ""});
   }
 
   rust::Vec<rust::String> input_drvs;
   input_drvs.reserve(drv.inputDrvs.size());
   for (auto &i : drv.inputDrvs) {
-    input_drvs.push_back(store()->printStorePath(i.first));
+    input_drvs.push_back(store->printStorePath(i.first));
   }
 
-  rust::Vec<rust::String> input_srcs;
-  input_srcs.reserve(drv.inputSrcs.size());
-  for (auto &i : drv.inputSrcs) {
-    input_srcs.push_back(store()->printStorePath(i));
-  }
-
+  rust::Vec<rust::String> input_srcs = extract_path_set(drv.inputSrcs);
   rust::Vec<rust::String> args;
   args.reserve(drv.args.size());
   for (const std::string &i : drv.args) {
@@ -314,7 +317,8 @@ InternalDrv derivation_from_path(rust::Str drv_path) {
 }
 
 void add_temp_root(rust::Str store_path) {
-  store()->addTempRoot(store()->parseStorePath(STRING_VIEW(store_path)));
+  auto store = get_store();
+  store->addTempRoot(store->parseStorePath(STRING_VIEW(store_path)));
 }
 
 rust::String get_bin_dir() {
@@ -326,10 +330,11 @@ rust::String get_store_dir() {
 }
 
 rust::String get_build_log(rust::Str derivation_path) {
-  auto path = store()->parseStorePath(STRING_VIEW(derivation_path));
+  auto store = get_store();
+  auto path = store->parseStorePath(STRING_VIEW(derivation_path));
   auto subs = nix::getDefaultSubstituters();
 
-  subs.push_front(store());
+  subs.push_front(store);
   auto b = to_derived_path(path);
 
   for (auto &sub : subs) {
@@ -363,7 +368,7 @@ rust::String get_nar_list(rust::Str store_path) {
   jsonRoot.attr("version", 1);
 
   auto res = jsonRoot.placeholder("root");
-  listNar(res, store()->getFSAccessor(), STRING_VIEW(store_path), true);
+  listNar(res, get_store()->getFSAccessor(), STRING_VIEW(store_path), true);
 
   return jsonOut.str();
 }
@@ -389,8 +394,9 @@ void dump_path(
   });
 
   try {
-    auto p = store()->parseStorePath(STRING_VIEW(store_path));
-    store()->narFromPath(p, sink);
+    auto store = get_store();
+    auto p = store->parseStorePath(STRING_VIEW(store_path));
+    store->narFromPath(p, sink);
   } catch (StopDump &e) {
     // Intentionally do nothing. We're only using the exception as a
     // short-circuiting mechanism.
