@@ -12,25 +12,47 @@ mod error;
 
 use crate::error::NixErr;
 
-pub enum ReferencesRet {
-    Ok(Vec<String>),
-    Err(String),
+macro_rules! gen_async_ctx {
+    ($name:ident, $t:ty) => {
+        paste::paste! {
+            // Internal type that is only public because of a cxx limitation
+            pub enum [<$name Ret>] {
+                Ok($t),
+                Err(String),
+            }
+            fn [<new_ $name:lower _ok>](v: $t) -> Box<[<$name Ret>]> {
+                Box::new([<$name Ret>]::Ok(v))
+            }
+            fn [<new_ $name:lower _err>](v: String) -> Box<[<$name Ret>]> {
+                Box::new([<$name Ret>]::Err(v))
+            }
+            // Internal type that is only public because of a cxx limitation
+            pub struct [<$name Ctx>](tokio::sync::oneshot::Sender<[<$name Ret>]>);
+        }
+    };
 }
-fn new_references_ok(v: Vec<String>) -> Box<ReferencesRet> {
-    Box::new(ReferencesRet::Ok(v))
-}
-fn new_references_err(msg: String) -> Box<ReferencesRet> {
-    Box::new(ReferencesRet::Err(msg))
-}
-pub struct ReferencesCtx(tokio::sync::oneshot::Sender<ReferencesRet>);
+
+gen_async_ctx!(References, Vec<String>); // ReferencesRet, ReferencesCtx
+gen_async_ctx!(String, String); // StringRet, StringCtx
+gen_async_ctx!(PathInfo, ffi::InternalPathInfo); // PathInfoRef, PathInfoCtx
 
 #[cxx::bridge(namespace = "libnixstore")]
 mod ffi {
     extern "Rust" {
         type ReferencesRet;
         fn new_references_ok(v: Vec<String>) -> Box<ReferencesRet>;
-        fn new_references_err(msg: String) -> Box<ReferencesRet>;
+        fn new_references_err(v: String) -> Box<ReferencesRet>;
         type ReferencesCtx;
+
+        type StringRet;
+        fn new_string_ok(v: String) -> Box<StringRet>;
+        fn new_string_err(v: String) -> Box<StringRet>;
+        type StringCtx;
+
+        type PathInfoRet;
+        fn new_pathinfo_ok(v: InternalPathInfo) -> Box<PathInfoRet>;
+        fn new_pathinfo_err(v: String) -> Box<PathInfoRet>;
+        type PathInfoCtx;
     }
 
     struct InternalPathInfo {
@@ -65,16 +87,38 @@ mod ffi {
         fn init();
         fn set_verbosity(level: i32);
         fn is_valid_path(path: &str) -> Result<bool>;
+
         fn query_references(
             path: &str,
             ctx: Box<ReferencesCtx>,
             send: fn(Box<ReferencesCtx>, ret: Box<ReferencesRet>) -> bool,
         ) -> Result<()>;
 
-        fn query_path_hash(path: &str) -> Result<String>;
-        fn query_deriver(path: &str) -> Result<String>;
-        fn query_path_info(path: &str, base32: bool) -> Result<InternalPathInfo>;
-        fn query_raw_realisation(output_id: &str) -> Result<String>;
+        fn query_path_hash(
+            path: &str,
+            ctx: Box<StringCtx>,
+            send: fn(Box<StringCtx>, ret: Box<StringRet>) -> bool,
+        ) -> Result<()>;
+
+        fn query_deriver(
+            path: &str,
+            ctx: Box<StringCtx>,
+            send: fn(Box<StringCtx>, ret: Box<StringRet>) -> bool,
+        ) -> Result<()>;
+
+        fn query_path_info(
+            path: &str,
+            base32: bool,
+            ctx: Box<PathInfoCtx>,
+            send: fn(Box<PathInfoCtx>, ret: Box<PathInfoRet>) -> bool,
+        ) -> Result<()>;
+
+        fn query_raw_realisation(
+            output_id: &str,
+            ctx: Box<StringCtx>,
+            send: fn(Box<StringCtx>, ret: Box<StringRet>) -> bool,
+        ) -> Result<()>;
+
         fn query_path_from_hash_part(hash_part: &str) -> Result<String>;
         fn compute_fs_closure(
             flip_direction: bool,
@@ -177,42 +221,65 @@ pub async fn query_references(path: &str) -> Result<Vec<String>, NixErr> {
 
 #[inline]
 /// Return narhash of a valid path. It is permitted to omit the name part of the store path.
-pub fn query_path_hash(path: &str) -> Result<String, NixErr> {
-    Ok(ffi::query_path_hash(path)?)
+pub async fn query_path_hash(path: &str) -> Result<String, NixErr> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    ffi::query_path_hash(path, Box::new(StringCtx(tx)), |ctx, ret| {
+        ctx.0.send(*ret).is_ok()
+    })?;
+    match rx.await {
+        Ok(StringRet::Ok(res)) => Ok(res),
+        Ok(StringRet::Err(msg)) => Err(NixErr::Exception(msg)),
+        Err(e) => Err(NixErr::Receiver(e)),
+    }
 }
 
 #[inline]
-#[must_use]
 /// Return deriver of a valid path. It is permitted to omit the name part of the store path.
-pub fn query_deriver(path: &str) -> Option<String> {
-    match ffi::query_deriver(path) {
-        Ok(v) => string_to_opt(v),
-        Err(_) => None,
+pub async fn query_deriver(path: &str) -> Result<Option<String>, NixErr> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    ffi::query_deriver(path, Box::new(StringCtx(tx)), |ctx, ret| {
+        ctx.0.send(*ret).is_ok()
+    })?;
+    match rx.await {
+        Ok(StringRet::Ok(res)) => Ok(string_to_opt(res)),
+        Ok(StringRet::Err(msg)) => Err(NixErr::Exception(msg)),
+        Err(e) => Err(NixErr::Receiver(e)),
     }
 }
 
 #[inline]
 /// Query information about a valid path. It is permitted to omit the name part of the store path.
-pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, NixErr> {
-    let res = ffi::query_path_info(path, base32)?;
-    Ok(PathInfo {
-        drv: string_to_opt(res.drv),
-        narhash: res.narhash,
-        time: res.time,
-        size: res.size,
-        refs: res.refs,
-        sigs: res.sigs,
-        ca: string_to_opt(res.ca),
-    })
+pub async fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, NixErr> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    ffi::query_path_info(path, base32, Box::new(PathInfoCtx(tx)), |ctx, ret| {
+        ctx.0.send(*ret).is_ok()
+    })?;
+    match rx.await {
+        Ok(PathInfoRet::Ok(res)) => Ok(PathInfo {
+            drv: string_to_opt(res.drv),
+            narhash: res.narhash,
+            time: res.time,
+            size: res.size,
+            refs: res.refs,
+            sigs: res.sigs,
+            ca: string_to_opt(res.ca),
+        }),
+        Ok(PathInfoRet::Err(msg)) => Err(NixErr::Exception(msg)),
+        Err(e) => Err(NixErr::Receiver(e)),
+    }
 }
 
 #[inline]
-#[must_use]
 /// Query the information about a realisation
-pub fn query_raw_realisation(output_id: &str) -> Option<String> {
-    match ffi::query_raw_realisation(output_id) {
-        Ok(v) => string_to_opt(v),
-        Err(_) => None,
+pub async fn query_raw_realisation(output_id: &str) -> Result<Option<String>, NixErr> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    ffi::query_raw_realisation(output_id, Box::new(StringCtx(tx)), |ctx, ret| {
+        ctx.0.send(*ret).is_ok()
+    })?;
+    match rx.await {
+        Ok(StringRet::Ok(res)) => Ok(string_to_opt(res)),
+        Ok(StringRet::Err(msg)) => Err(NixErr::Exception(msg)),
+        Err(e) => Err(NixErr::Receiver(e)),
     }
 }
 
@@ -422,7 +489,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_binding() {
+    async fn async_query_references() {
         assert!(query_references(&get_test_pkg()).await.unwrap().len() > 0);
+    }
+
+    #[tokio::test]
+    async fn async_query_pathinfo() {
+        let info = query_path_info(&get_test_pkg(), true).await;
+        assert!(info.is_ok());
+        let info = info.unwrap();
+        assert!(!info.narhash.is_empty());
     }
 }

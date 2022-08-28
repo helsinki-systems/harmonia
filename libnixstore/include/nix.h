@@ -7,13 +7,29 @@ namespace libnixstore {
 void init();
 void set_verbosity(int32_t level);
 bool is_valid_path(rust::Str path);
+
 void query_references(
     rust::Str path, rust::Box<ReferencesCtx> ctx,
-    rust::Fn<bool(rust::Box<ReferencesCtx> ctx, rust::Box<ReferencesRet> ret)> send);
-rust::String query_path_hash(rust::Str path);
-rust::String query_deriver(rust::Str path);
-InternalPathInfo query_path_info(rust::Str path, bool base32);
-rust::String query_raw_realisation(rust::Str output_id);
+    rust::Fn<bool(rust::Box<ReferencesCtx> ctx, rust::Box<ReferencesRet> ret)>
+        send);
+
+void query_path_hash(
+    rust::Str path, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send);
+
+void query_deriver(
+    rust::Str path, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send);
+
+void query_path_info(
+    rust::Str path, bool base32, rust::Box<PathInfoCtx> ctx,
+    rust::Fn<bool(rust::Box<PathInfoCtx> ctx, rust::Box<PathInfoRet> ret)>
+        send);
+
+void query_raw_realisation(
+    rust::Str output_id, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send);
+
 rust::String query_path_from_hash_part(rust::Str hash_part);
 rust::Vec<rust::String> compute_fs_closure(bool flip_direction,
                                            bool include_outputs,

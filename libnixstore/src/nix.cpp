@@ -99,7 +99,8 @@ void query_references(
                   std::move(new_references_ok(
                       std::move(extract_path_set(fut.get()->references)))));
         } catch (const std::exception &e) {
-          (*send)(std::move(ctx), std::move(new_references_err(e.what())));
+          (*send)(std::move(ctx),
+                  std::move(new_references_err(std::move(e.what()))));
         }
       }};
 
@@ -107,55 +108,106 @@ void query_references(
   store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)), std::move(cb));
 }
 
-rust::String query_path_hash(rust::Str path) {
+void query_path_hash(
+    rust::Str path, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send) {
+  nix::Callback<nix::ref<const nix::ValidPathInfo>> cb = {
+      [&ctx, &send](std::future<nix::ref<const nix::ValidPathInfo>> fut) {
+        try {
+          (*send)(std::move(ctx),
+                  std::move(new_string_ok(std::move(
+                      fut.get()->narHash.to_string(nix::Base32, true)))));
+        } catch (const std::exception &e) {
+          (*send)(std::move(ctx),
+                  std::move(new_string_err(std::move(e.what()))));
+        }
+      }};
+
   auto store = get_store();
-  return store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)))
-      ->narHash.to_string(nix::Base32, true);
+  store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)), std::move(cb));
 }
 
-rust::String query_deriver(rust::Str path) {
+void query_deriver(
+    rust::Str path, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send) {
+  nix::Callback<nix::ref<const nix::ValidPathInfo>> cb = {
+      [&ctx, &send](std::future<nix::ref<const nix::ValidPathInfo>> fut) {
+        try {
+          (*send)(std::move(ctx), std::move(new_string_ok(std::move(
+                                      extract_opt_path(fut.get()->deriver)))));
+        } catch (const std::exception &e) {
+          (*send)(std::move(ctx),
+                  std::move(new_string_err(std::move(e.what()))));
+        }
+      }};
+
   auto store = get_store();
-  nix::ref<const nix::ValidPathInfo> info =
-      store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)));
-  return extract_opt_path(info->deriver);
+  store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)), std::move(cb));
 }
 
-InternalPathInfo query_path_info(rust::Str path, bool base32) {
+void query_path_info(
+    rust::Str path, bool base32, rust::Box<PathInfoCtx> ctx,
+    rust::Fn<bool(rust::Box<PathInfoCtx> ctx, rust::Box<PathInfoRet> ret)>
+        send) {
+  nix::Callback<nix::ref<const nix::ValidPathInfo>> cb = {
+      [&ctx, &send,
+       &base32](std::future<nix::ref<const nix::ValidPathInfo>> fut) {
+        try {
+          auto info = fut.get();
+          std::string narhash =
+              info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
+
+          rust::Vec<rust::String> refs = extract_path_set(info->references);
+          rust::Vec<rust::String> sigs;
+          sigs.reserve(info->sigs.size());
+          for (const std::string &sig : info->sigs) {
+            sigs.push_back(sig);
+          }
+
+          // TODO(conni2461): Replace "" with option
+          auto ret = InternalPathInfo{
+              extract_opt_path(info->deriver),
+              narhash,
+              info->registrationTime,
+              info->narSize,
+              refs,
+              sigs,
+              info->ca ? nix::renderContentAddress(*info->ca) : "",
+          };
+
+          (*send)(std::move(ctx), std::move(new_pathinfo_ok(std::move(ret))));
+        } catch (const std::exception &e) {
+          (*send)(std::move(ctx),
+                  std::move(new_pathinfo_err(std::move(e.what()))));
+        }
+      }};
+
   auto store = get_store();
-  nix::ref<const nix::ValidPathInfo> info =
-      store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)));
-
-  std::string narhash =
-      info->narHash.to_string(base32 ? nix::Base32 : nix::Base16, true);
-
-  rust::Vec<rust::String> refs = extract_path_set(info->references);
-  rust::Vec<rust::String> sigs;
-  sigs.reserve(info->sigs.size());
-  for (const std::string &sig : info->sigs) {
-    sigs.push_back(sig);
-  }
-
-  // TODO(conni2461): Replace "" with option
-  return InternalPathInfo{
-      extract_opt_path(info->deriver),
-      narhash,
-      info->registrationTime,
-      info->narSize,
-      refs,
-      sigs,
-      info->ca ? nix::renderContentAddress(*info->ca) : "",
-  };
+  store->queryPathInfo(store->parseStorePath(STRING_VIEW(path)), std::move(cb));
 }
 
-rust::String query_raw_realisation(rust::Str output_id) {
-  std::shared_ptr<const nix::Realisation> realisation =
-      get_store()->queryRealisation(
-          nix::DrvOutput::parse(STRING_VIEW(output_id)));
-  if (!realisation) {
-    // TODO(conni2461): Replace with option
-    return "";
-  }
-  return realisation->toJSON().dump();
+void query_raw_realisation(
+    rust::Str output_id, rust::Box<StringCtx> ctx,
+    rust::Fn<bool(rust::Box<StringCtx> ctx, rust::Box<StringRet> ret)> send) {
+  nix::Callback<std::shared_ptr<const nix::Realisation>> cb = {
+      [&ctx, &send](std::future<std::shared_ptr<const nix::Realisation>> fut) {
+        try {
+          auto realisation = fut.get();
+          if (!realisation) {
+            // TODO(conni2461): Replace with option
+            (*send)(std::move(ctx), std::move(new_string_ok("")));
+          }
+
+          (*send)(std::move(ctx), std::move(new_string_ok(std::move(
+                                      realisation->toJSON().dump()))));
+        } catch (const std::exception &e) {
+          (*send)(std::move(ctx),
+                  std::move(new_string_err(std::move(e.what()))));
+        }
+      }};
+
+  get_store()->queryRealisation(nix::DrvOutput::parse(STRING_VIEW(output_id)),
+                                std::move(cb));
 }
 
 rust::String query_path_from_hash_part(rust::Str hash_part) {

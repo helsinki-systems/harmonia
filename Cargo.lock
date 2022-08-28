@@ -645,6 +645,7 @@ version = "0.2.0"
 dependencies = [
  "cxx",
  "cxx-build",
+ "paste",
  "pkg-config",
  "tokio",
 ]
