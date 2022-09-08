@@ -1,7 +1,7 @@
 use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, error::Error, path::Path};
+use std::{error::Error, path::Path};
 use tokio::sync;
 
 // TODO(conni2461): conf file
@@ -146,17 +146,18 @@ fn extract_filename(path: &str) -> Option<String> {
     }
 }
 
-fn query_narinfo(store_path: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
+fn query_narinfo(store_path: &str, hash: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
     let path_info = libnixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
         store_path: store_path.into(),
         url: format!(
-            "nar/{}.nar",
+            "nar/{}.nar?hash={}",
             path_info
                 .narhash
                 .split(':')
                 .nth(1)
-                .ok_or("Could not split hash on :")?
+                .ok_or("Could not split hash on :")?,
+            hash
         ),
         compression: "none".into(),
         nar_hash: path_info.narhash,
@@ -204,8 +205,6 @@ macro_rules! some_or_404 {
     };
 }
 
-type NarStore = HashMap<String, String>;
-
 #[derive(Debug, Deserialize)]
 pub struct Param {
     json: Option<String>,
@@ -214,23 +213,11 @@ pub struct Param {
 async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
-    data: web::Data<sync::Mutex<NarStore>>,
     sign_key: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = some_or_404!(nixhash(&hash));
-    let narinfo = query_narinfo(&store_path, sign_key.as_deref())?;
-    let mut nars = data.lock().await;
-    nars.entry(
-        narinfo
-            .nar_hash
-            .split(':')
-            .nth(1)
-            .ok_or("Could not split hash on :")?
-            .to_owned(),
-    )
-    .or_insert(hash);
-    drop(nars);
+    let narinfo = query_narinfo(&store_path, &hash, sign_key.as_deref())?;
 
     if param.json.is_some() {
         Ok(HttpResponse::Ok().json(narinfo))
@@ -243,16 +230,17 @@ async fn get_narinfo(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NarRequest {
+   hash: String,
+}
+
 async fn stream_nar(
-    nar_hash: web::Path<String>,
-    data: web::Data<sync::Mutex<NarStore>>,
+    _nar_hash: web::Path<String>,
     req: HttpRequest,
+    info: web::Query<NarRequest>
 ) -> Result<HttpResponse, Box<dyn Error>> {
-    let hash = some_or_404!({
-        let nars = data.lock().await;
-        nars.get(&nar_hash.into_inner()).cloned()
-    });
-    let store_path = some_or_404!(nixhash(&hash));
+    let store_path = some_or_404!(libnixstore::query_path_from_hash_part(&info.hash));
 
     let size = libnixstore::query_path_info(&store_path, true)?.size;
     let mut rlength = size;
@@ -475,7 +463,6 @@ async fn main() -> std::io::Result<()> {
     let secret_key = get_secret_key(sign_key_path.as_deref())
         .expect("Unexpected error while extracting the secret key");
 
-    let narstore_data = web::Data::new(sync::Mutex::new(NarStore::new()));
     let conf_data = web::Data::new(config);
     let secret_key_data = web::Data::new(secret_key);
 
@@ -484,7 +471,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middleware::Logger::default())
             // .wrap(middleware::Compress::default())
-            .app_data(narstore_data.clone())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
             .route("/", web::get().to(index))
