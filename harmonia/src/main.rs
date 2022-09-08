@@ -2,7 +2,7 @@ use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServe
 use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, path::Path};
-use tokio::{io::AsyncBufReadExt, io::BufReader, process, sync};
+use tokio::sync;
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -285,45 +285,29 @@ async fn stream_nar(
         };
     };
 
-    let mut child = process::Command::new("nix-store")
-        .arg("--dump")
-        .arg(&store_path)
-        .stdout(std::process::Stdio::piped())
-        .spawn()?;
-
     let (tx, rx) =
         sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
     let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let mut reader = BufReader::new(child.stdout.take().ok_or("")?);
-    actix_web::rt::spawn(async move {
-        let mut send = 0;
-        while let Ok(bytes) = reader.fill_buf().await {
-            if bytes.is_empty() {
-                break;
-            }
-
-            let length = bytes.len();
-            if offset <= send + length {
-                let bytes = bytes.to_vec();
-                let start = if offset > send { offset - send } else { 0 };
-                let end = if (offset + rlength) < (send + length) {
-                    start + rlength
-                } else {
-                    length
-                };
-                reader.consume(length);
-                send += end;
-                let res = tx.send(Ok(web::Bytes::from(bytes).slice(start..end)));
-                if res.is_err() || end != length {
-                    child.start_kill().expect("Trying to kill child process");
-                    break;
-                }
+    let mut send = 0;
+    let closure = |data: &[u8]| {
+        let length = data.len();
+        if offset <= send + length {
+            let start = if offset > send { offset - send } else { 0 };
+            let end = if (offset + rlength) < (send + length) {
+                start + rlength
             } else {
-                send += length;
-                reader.consume(length);
-            }
+                length
+            };
+            // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
+            let data = Vec::from(data);
+            tx.send(Ok(web::Bytes::from(data).slice(start..end))).is_ok()
+        } else {
+            send += length;
+            true
         }
-    });
+    };
+
+    libnixstore::dump_path(&store_path, closure);
 
     Ok(res
         .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))

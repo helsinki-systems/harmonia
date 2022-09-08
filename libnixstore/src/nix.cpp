@@ -353,4 +353,33 @@ rust::String get_nar_list(rust::Str store_path) {
 
   return jsonOut.str();
 }
+
+class StopDump : public std::exception {
+public:
+  const char *what() {
+    return "Stop dumping nar";
+  }
+};
+
+void dump_path(
+    rust::Str store_path,
+    rust::Fn<bool(rust::Slice<const uint8_t>, long unsigned int)> callback,
+    size_t user_data) {
+
+  nix::LambdaSink sink([=](std::string_view v) {
+    auto data = rust::Slice<const uint8_t>((const uint8_t *)v.data(), v.size());
+    bool ret = (*callback)(data, user_data);
+    if (!ret) {
+      throw StopDump();
+    }
+  });
+
+  try {
+    auto p = store()->parseStorePath(STRING_VIEW(store_path));
+    store()->narFromPath(p, sink);
+  } catch (StopDump &e) {
+    // Intentionally do nothing. We're only using the exception as a
+    // short-circuiting mechanism.
+  }
+}
 } // namespace libnixstore
