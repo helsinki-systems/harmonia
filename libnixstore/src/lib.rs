@@ -123,10 +123,11 @@ pub fn init() {
 #[inline]
 /// Set the loglevel.
 pub fn set_verbosity(level: i32) {
-    ffi::set_verbosity(level)
+    ffi::set_verbosity(level);
 }
 
 #[inline]
+#[must_use]
 /// Check whether a path is valid.
 pub fn is_valid_path(path: &str) -> bool {
     ffi::is_valid_path(path).unwrap_or(false)
@@ -145,6 +146,7 @@ pub fn query_path_hash(path: &str) -> Result<String, cxx::Exception> {
 }
 
 #[inline]
+#[must_use]
 /// Return deriver of a valid path. It is permitted to omit the name part of the store path.
 pub fn query_deriver(path: &str) -> Option<String> {
     match ffi::query_deriver(path) {
@@ -169,6 +171,7 @@ pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, cxx::Except
 }
 
 #[inline]
+#[must_use]
 /// Query the information about a realisation
 pub fn query_raw_realisation(output_id: &str) -> Option<String> {
     match ffi::query_raw_realisation(output_id) {
@@ -178,6 +181,7 @@ pub fn query_raw_realisation(output_id: &str) -> Option<String> {
 }
 
 #[inline]
+#[must_use]
 /// Query the full store path given the hash part of a valid store path, or empty if the path
 /// doesn't exist.
 pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
@@ -319,18 +323,21 @@ pub fn add_temp_root(store_path: &str) -> Result<(), cxx::Exception> {
 }
 
 #[inline]
+#[must_use]
 /// Return the path to the directory where the main programs are stored.
 pub fn get_bin_dir() -> String {
     ffi::get_bin_dir()
 }
 
 #[inline]
+#[must_use]
 /// Returns the path to the directory where nix store sources and derived files.
 pub fn get_store_dir() -> String {
     ffi::get_store_dir()
 }
 
 #[inline]
+#[must_use]
 /// Return the build log of the specified store path, if available, or null otherwise.
 pub fn get_build_log(derivation_path: &str) -> Option<String> {
     match ffi::get_build_log(derivation_path) {
@@ -349,7 +356,7 @@ fn dump_path_trampoline<F>(data: &[u8], userdata: usize) -> bool
 where
     F: FnMut(&[u8]) -> bool,
 {
-    let closure = unsafe { &mut *((userdata as *mut std::ffi::c_void) as *mut F) };
+    let closure = unsafe { &mut *(userdata as *mut std::ffi::c_void).cast::<F>() };
     closure(data)
 }
 
@@ -362,6 +369,6 @@ where
     ffi::dump_path(
         store_path,
         dump_path_trampoline::<F>,
-        &callback as *const _ as *const std::ffi::c_void as usize,
+        std::ptr::addr_of!(callback).cast::<std::ffi::c_void>() as usize,
     );
 }
