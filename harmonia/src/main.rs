@@ -22,12 +22,12 @@ impl HttpRange {
     ///
     /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
     /// `size` is full size of response (file).
-    fn parse(header: &str, size: usize) -> Result<Vec<HttpRange>, http_range::HttpRangeParseError> {
+    fn parse(header: &str, size: usize) -> Result<Vec<Self>, http_range::HttpRangeParseError> {
         log::info!("header: {}, size: {}", header, size);
         match http_range::HttpRange::parse(header, size as u64) {
             Ok(ranges) => Ok(ranges
                 .iter()
-                .map(|range| HttpRange {
+                .map(|range| Self {
                     start: range.start as usize,
                     length: range.length as usize,
                 })
@@ -45,11 +45,7 @@ fn nixhash(hash: &str) -> Option<String> {
 }
 
 fn query_drv_path(drv: &str) -> Option<String> {
-    let drv = if drv.len() > 32 { &drv[0..32] } else { drv };
-    if drv.len() != 32 {
-        return None;
-    }
-    libnixstore::query_path_from_hash_part(drv)
+    nixhash(if drv.len() > 32 { &drv[0..32] } else { drv })
 }
 
 #[derive(Debug, Serialize)]
@@ -141,22 +137,22 @@ fn fingerprint_path(
 
 fn extract_filename(path: &str) -> Option<String> {
     match Path::new(path).file_name() {
-        Some(v) => v.to_str().map(|v| v.to_owned()),
+        Some(v) => v.to_str().map(ToOwned::to_owned),
         None => None,
     }
 }
 
-fn query_narinfo(store_path: &str, hash: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
+fn query_narinfo(
+    store_path: &str,
+    hash: &str,
+    sign_key: Option<&str>,
+) -> Result<NarInfo, Box<dyn Error>> {
     let path_info = libnixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
         store_path: store_path.into(),
         url: format!(
             "nar/{}.nar?hash={}",
-            path_info
-                .narhash
-                .split(':')
-                .nth(1)
-                .ok_or("Could not split hash on :")?,
+            path_info.narhash.split_once(':').map_or(hash, |x| x.1),
             hash
         ),
         compression: "none".into(),
@@ -232,13 +228,13 @@ async fn get_narinfo(
 
 #[derive(Debug, Deserialize)]
 pub struct NarRequest {
-   hash: String,
+    hash: String,
 }
 
 async fn stream_nar(
     _nar_hash: web::Path<String>,
     req: HttpRequest,
-    info: web::Query<NarRequest>
+    info: web::Query<NarRequest>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(libnixstore::query_path_from_hash_part(&info.hash));
 
@@ -288,7 +284,8 @@ async fn stream_nar(
             };
             // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
             let data = Vec::from(data);
-            tx.send(Ok(web::Bytes::from(data).slice(start..end))).is_ok()
+            tx.send(Ok(web::Bytes::from(data).slice(start..end)))
+                .is_ok()
         } else {
             send += length;
             true
@@ -411,12 +408,12 @@ fn init_config() -> Result<Config, ConfigError> {
         .set_default::<_, Option<String>>("sign_key_path", None)?;
 
     if Path::new(&settings_file).exists() {
-        builder = builder.add_source(config::File::with_name(&settings_file))
+        builder = builder.add_source(config::File::with_name(&settings_file));
     } else {
         log::warn!(
             "Config file {} was not found. Using default values",
             settings_file
-        )
+        );
     }
 
     builder.build()
@@ -429,11 +426,10 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
             .split_once(':')
             .ok_or("Sign key does not contain a ':'")?;
         let sign_keyno64 = base64::decode(sign_key64)?;
-        if sign_keyno64.len() != 64 {
-            log::error!("invalid signing key provided. signing disabled");
-        } else {
-            return Ok(Some(sign_key.to_owned()));
+        if sign_keyno64.len() == 64 {
+            return Ok(Some(sign_key.clone()));
         }
+        log::error!("invalid signing key provided. signing disabled");
     }
     Ok(None)
 }
