@@ -78,7 +78,11 @@ mod ffi {
         // additional but useful for harmonia
         fn get_build_log(derivation_path: &str) -> Result<String>;
         fn get_nar_list(store_path: &str) -> Result<String>;
-        fn dump_path(store_part: &str, callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool, user_data: usize);
+        fn dump_path(
+            store_part: &str,
+            callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool,
+            user_data: usize,
+        );
     }
 }
 
@@ -353,8 +357,11 @@ where
 /// Dump a store path in NAR format. The data is passed in chunks to callback
 pub fn dump_path<F>(store_path: &str, callback: F)
 where
-    F: FnMut(&[u8]) -> bool
-
+    F: FnMut(&[u8]) -> bool,
 {
-    ffi::dump_path(store_path, dump_path_trampoline::<F>, &callback as *const _ as *const std::ffi::c_void as usize);
+    ffi::dump_path(
+        store_path,
+        dump_path_trampoline::<F>,
+        &callback as *const _ as *const std::ffi::c_void as usize,
+    );
 }

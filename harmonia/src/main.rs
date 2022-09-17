@@ -146,7 +146,11 @@ fn extract_filename(path: &str) -> Option<String> {
     }
 }
 
-fn query_narinfo(store_path: &str, hash: &str, sign_key: Option<&str>) -> Result<NarInfo, Box<dyn Error>> {
+fn query_narinfo(
+    store_path: &str,
+    hash: &str,
+    sign_key: Option<&str>,
+) -> Result<NarInfo, Box<dyn Error>> {
     let path_info = libnixstore::query_path_info(store_path, true)?;
     let mut res = NarInfo {
         store_path: store_path.into(),
@@ -232,13 +236,13 @@ async fn get_narinfo(
 
 #[derive(Debug, Deserialize)]
 pub struct NarRequest {
-   hash: String,
+    hash: String,
 }
 
 async fn stream_nar(
     _nar_hash: web::Path<String>,
     req: HttpRequest,
-    info: web::Query<NarRequest>
+    info: web::Query<NarRequest>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(libnixstore::query_path_from_hash_part(&info.hash));
 
@@ -288,7 +292,8 @@ async fn stream_nar(
             };
             // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
             let data = Vec::from(data);
-            tx.send(Ok(web::Bytes::from(data).slice(start..end))).is_ok()
+            tx.send(Ok(web::Bytes::from(data).slice(start..end)))
+                .is_ok()
         } else {
             send += length;
             true
