@@ -1,6 +1,6 @@
 [package]
 name = "libnixstore"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Simon Hauser <simon.hauser@helsinki-systems.de>"]
 description = "Rust friendly bindings to nixos nix-store library"
 edition = "2021"
