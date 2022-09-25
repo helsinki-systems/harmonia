@@ -75,7 +75,5 @@ in
       };
       groups.harmonia = { };
     };
-
-    nix.allowedUsers = [ "harmonia" ];
   };
 }
