@@ -5,7 +5,7 @@ let
   format = pkgs.formats.toml { };
   configFile = format.generate "harmonia.toml" cfg.settings;
 
-  harmonia = import ./. { };
+  harmonia = import ./. { inherit pkgs; };
 in
 {
   options = {
