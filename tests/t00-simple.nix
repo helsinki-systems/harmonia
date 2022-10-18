@@ -6,6 +6,8 @@ let
   '';
 in
 {
+  name = "t00-simple";
+
   nodes = {
     harmonia = { config, pkgs, ... }:
       {

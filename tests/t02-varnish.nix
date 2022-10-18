@@ -6,6 +6,8 @@ let
   '';
 in
 {
+  name = "t02-varnish";
+
   nodes = {
     harmonia = { config, pkgs, ... }:
       {

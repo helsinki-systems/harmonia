@@ -14,6 +14,8 @@ let
   '';
 in
 {
+  name = "t01-signing";
+
   nodes = {
     harmonia = { config, pkgs, ... }:
       {
