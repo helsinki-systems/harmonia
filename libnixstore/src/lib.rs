@@ -108,11 +108,11 @@ pub struct PathInfo {
     pub size: usize,
     /// The store paths referenced by this path.
     pub refs: Vec<String>,
-    /// The signatures on this store path; "note: not necessarily verified"
+    /// The signatures on this store path; "note: not necessarily verified".
     pub sigs: Vec<String>,
     /// Indicates if this store-path is input-addressed (`None`) or content-addressed (`Some`).  The
     /// `String` value contains the content hash as well as "some other bits of data"; see
-    /// `path-info.hh` for details
+    /// `path-info.hh` for details.
     pub ca: Option<String>,
 }
 
@@ -120,12 +120,12 @@ pub struct Drv {
     /// The mapping from output names to to realised outpaths, or `None` for outputs which are not
     /// realised in this store.
     pub outputs: std::collections::HashMap<String, Option<String>>,
-    /// The paths of this derivation's input derivations
+    /// The paths of this derivation's input derivations.
     pub input_drvs: Vec<String>,
     /// The paths of this derivation's input sources; these are files which enter the nix store as a
     /// result of `nix-store --add` or a `./path` reference.
     pub input_srcs: Vec<String>,
-    /// The `system` field of the derivation
+    /// The `system` field of the derivation.
     pub platform: String,
     /// The `builder` field of the derivation, which is executed in order to realise the
     /// derivation's outputs.
