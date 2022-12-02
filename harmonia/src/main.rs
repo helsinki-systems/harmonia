@@ -1,11 +1,7 @@
 use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
-use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, path::Path};
+use std::{error::Error, fs::read_to_string, path::Path};
 use tokio::sync;
-
-// TODO(conni2461): conf file
-// - users to restrict access
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
@@ -226,11 +222,11 @@ pub struct Param {
 async fn get_narinfo(
     hash: web::Path<String>,
     param: web::Query<Param>,
-    sign_key: web::Data<Option<String>>,
+    settings: web::Data<Config>,
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let hash = hash.into_inner();
     let store_path = some_or_404!(nixhash(&hash));
-    let narinfo = query_narinfo(&store_path, &hash, sign_key.as_deref())?;
+    let narinfo = query_narinfo(&store_path, &hash, settings.secret_key.as_deref())?;
 
     if param.json.is_some() {
         Ok(HttpResponse::Ok()
@@ -397,7 +393,7 @@ async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>
             version = env!("CARGO_PKG_VERSION"),
             repo = env!("CARGO_PKG_HOMEPAGE"),
             store = libnixstore::get_store_dir(),
-            priority = config.get::<usize>("priority")?,
+            priority = config.priority,
         )))
 }
 
@@ -416,42 +412,83 @@ async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn E
             vec![
                 format!("StoreDir: {}", libnixstore::get_store_dir()),
                 "WantMassQuery: 1".to_owned(),
-                format!("Priority: {}", config.get::<usize>("priority")?),
+                format!("Priority: {}", config.priority),
                 "".to_owned(),
             ]
             .join("\n"),
         ))
 }
 
-fn init_config() -> Result<Config, ConfigError> {
-    let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
-
-    let mut builder = Config::builder()
-        .set_default("bind", "127.0.0.1:8080")?
-        .set_default("workers", 4)?
-        .set_default("max_connection_rate", 256)?
-        .set_default("priority", 30)?
-        .set_default::<_, Option<String>>("sign_key_path", None)?;
-
-    if Path::new(&settings_file).exists() {
-        builder = builder.add_source(config::File::with_name(&settings_file));
-    } else {
-        log::warn!(
-            "Config file {} was not found. Using default values",
-            settings_file
-        );
-    }
-
-    builder.build()
+fn default_bind() -> String {
+    "127.0.0.1:8080".into()
 }
 
-fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn Error>> {
+fn default_workers() -> usize {
+    4
+}
+
+fn default_connection_rate() -> usize {
+    256
+}
+
+fn default_priority() -> usize {
+    30
+}
+
+// TODO(conni2461): users to restrict access
+#[derive(Deserialize, Debug)]
+struct Config {
+    #[serde(default = "default_bind")]
+    bind: String,
+    #[serde(default = "default_workers")]
+    workers: usize,
+    #[serde(default = "default_connection_rate")]
+    max_connection_rate: usize,
+    #[serde(default = "default_priority")]
+    priority: usize,
+    #[serde(default)]
+    sign_key_path: Option<String>,
+    #[serde(default)]
+    secret_key: Option<String>,
+}
+
+#[derive(Debug)]
+struct ConfigError {
+    details: String,
+}
+
+impl ConfigError {
+    fn new(details: String) -> Self {
+        Self { details }
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+fn init_config() -> Result<Config, ConfigError> {
+    let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
+    let mut settings: Config = toml::from_str(
+        &read_to_string(&settings_file)
+            .map_err(|e| ConfigError::new(format!("Couldn't read config file: {}", e)))?,
+    )
+    .map_err(|e| ConfigError::new(format!("Couldn't parse config file: {}", e)))?;
+    settings.secret_key = get_secret_key(settings.sign_key_path.as_deref())?;
+    Ok(settings)
+}
+
+fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, ConfigError> {
     if let Some(path) = sign_key_path {
-        let sign_key = std::fs::read_to_string(path)?;
+        let sign_key = read_to_string(path)
+            .map_err(|e| ConfigError::new(format!("Couldn't read sign_key file: {}", e)))?;
         let (_sign_host, sign_key64) = sign_key
             .split_once(':')
-            .ok_or("Sign key does not contain a ':'")?;
-        let sign_keyno64 = base64::decode(sign_key64.trim())?;
+            .ok_or_else(|| ConfigError::new("Sign key does not contain a ':'".into()))?;
+        let sign_keyno64 = base64::decode(sign_key64.trim())
+            .map_err(|e| ConfigError::new(format!("Couldn't base64::decode sign key: {}", e)))?;
         if sign_keyno64.len() == 64 {
             return Ok(Some(sign_key.to_owned()));
         }
@@ -462,37 +499,22 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,actix_web=debug"),
-    )
-    .init();
-
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     libnixstore::init();
 
-    let config = init_config().expect("Could not parse config file");
-    let bind = config
-        .get::<String>("bind")
-        .expect("No hostname to bind on set");
-    let workers = config
-        .get::<usize>("workers")
-        .expect("No workers option as usize was set");
-    let max_connection_rate = config
-        .get::<usize>("max_connection_rate")
-        .expect("No max_connection_rate option as usize was set");
-    let sign_key_path = config
-        .get::<Option<String>>("sign_key_path")
-        .expect("sign_key_path should be at least None, but it isn't. This shouldn't happen");
-    let secret_key = get_secret_key(sign_key_path.as_deref())
-        .expect("Unexpected error while extracting the secret key");
+    let config = match init_config() {
+        Ok(v) => web::Data::new(v),
+        Err(e) => {
+            log::error!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let config_data = config.clone();
 
-    let conf_data = web::Data::new(config);
-    let secret_key_data = web::Data::new(secret_key);
-
-    log::info!("listening on {}", bind);
+    log::info!("listening on {}", config.bind);
     HttpServer::new(move || {
         App::new()
-            .app_data(conf_data.clone())
-            .app_data(secret_key_data.clone())
+            .app_data(config_data.clone())
             .route("/", web::get().to(index))
             .route("/{hash}.ls", web::get().to(get_nar_list))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
@@ -502,9 +524,9 @@ async fn main() -> std::io::Result<()> {
             .route("/version", web::get().to(version))
             .route("/nix-cache-info", web::get().to(cache_info))
     })
-    .workers(workers)
-    .max_connection_rate(max_connection_rate)
-    .bind(bind)?
+    .workers(config.workers)
+    .max_connection_rate(config.max_connection_rate)
+    .bind(config.bind.clone())?
     .run()
     .await
 }
