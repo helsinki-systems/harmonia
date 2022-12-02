@@ -1,4 +1,4 @@
-use actix_web::{http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
 use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, path::Path};
@@ -23,17 +23,15 @@ impl HttpRange {
     /// `header` is HTTP Range header (e.g. `bytes=bytes=0-9`).
     /// `size` is full size of response (file).
     fn parse(header: &str, size: usize) -> Result<Vec<Self>, http_range::HttpRangeParseError> {
-        log::info!("header: {}, size: {}", header, size);
-        match http_range::HttpRange::parse(header, size as u64) {
-            Ok(ranges) => Ok(ranges
+        http_range::HttpRange::parse(header, size as u64).map(|ranges| {
+            ranges
                 .iter()
                 .map(|range| Self {
                     start: range.start as usize,
                     length: range.length as usize,
                 })
-                .collect()),
-            Err(e) => Err(e),
-        }
+                .collect()
+        })
     }
 }
 
@@ -136,10 +134,9 @@ fn fingerprint_path(
 }
 
 fn extract_filename(path: &str) -> Option<String> {
-    match Path::new(path).file_name() {
-        Some(v) => v.to_str().map(ToOwned::to_owned),
-        None => None,
-    }
+    Path::new(path)
+        .file_name()
+        .and_then(|v| v.to_str().map(ToOwned::to_owned))
 }
 
 fn cache_control_max_age(max_age: u32) -> http::header::CacheControl {
