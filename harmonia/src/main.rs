@@ -491,8 +491,6 @@ async fn main() -> std::io::Result<()> {
     log::info!("listening on {}", bind);
     HttpServer::new(move || {
         App::new()
-            .wrap(middleware::Logger::default())
-            // .wrap(middleware::Compress::default())
             .app_data(conf_data.clone())
             .app_data(secret_key_data.clone())
             .route("/", web::get().to(index))
