@@ -9,6 +9,8 @@ Note: This project provides bindings, this makes the project automatically unsaf
 Supported nix version:
 - nix 2.8
 - nix 2.9
+- nix 2.10
+- nix 2.11
 
 ## Requirements
 
@@ -22,7 +24,7 @@ stdenv.mkDerivation {
   nativeBuildInputs = [ rustc cargo gcc pkg-config ];
   buildInputs = [
     # required
-    nixVersions.nix_2_9
+    nix
     nlohmann_json
     libsodium
     boost
