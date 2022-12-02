@@ -142,6 +142,22 @@ fn extract_filename(path: &str) -> Option<String> {
     }
 }
 
+fn cache_control_max_age(max_age: u32) -> http::header::CacheControl {
+    http::header::CacheControl(vec![http::header::CacheDirective::MaxAge(max_age)])
+}
+
+fn cache_control_max_age_1y() -> http::header::CacheControl {
+    cache_control_max_age(365 * 24 * 60 * 60)
+}
+
+fn cache_control_max_age_1d() -> http::header::CacheControl {
+    cache_control_max_age(24 * 60 * 60)
+}
+
+fn cache_control_no_store() -> http::header::CacheControl {
+    http::header::CacheControl(vec![http::header::CacheDirective::NoStore])
+}
+
 fn query_narinfo(
     store_path: &str,
     hash: &str,
@@ -196,7 +212,11 @@ macro_rules! some_or_404 {
     ($res:expr) => {
         match $res {
             Some(val) => val,
-            None => return Ok(HttpResponse::NotFound().body("missed hash")),
+            None => {
+                return Ok(HttpResponse::NotFound()
+                    .insert_header(cache_control_no_store())
+                    .body("missed hash"))
+            }
         }
     };
 }
@@ -216,12 +236,15 @@ async fn get_narinfo(
     let narinfo = query_narinfo(&store_path, &hash, sign_key.as_deref())?;
 
     if param.json.is_some() {
-        Ok(HttpResponse::Ok().json(narinfo))
+        Ok(HttpResponse::Ok()
+            .insert_header(cache_control_max_age_1d())
+            .json(narinfo))
     } else {
         let res = format_narinfo_txt(&narinfo);
         Ok(HttpResponse::Ok()
             .insert_header((http::header::CONTENT_TYPE, "text/x-nix-narinfo"))
             .insert_header(("Nix-Link", narinfo.url))
+            .insert_header(cache_control_max_age_1d())
             .body(res))
     }
 }
@@ -297,6 +320,7 @@ async fn stream_nar(
     Ok(res
         .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
         .insert_header((http::header::ACCEPT_RANGES, "bytes"))
+        .insert_header(cache_control_max_age_1y())
         .body(actix_web::body::SizedStream::new(rlength as u64, rx)))
 }
 
@@ -306,14 +330,19 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
         let build_log = some_or_404!(libnixstore::get_build_log(&drv_path));
         return Ok(HttpResponse::Ok()
             .insert_header(http::header::ContentType(mime::TEXT_PLAIN_UTF_8))
+            .insert_header(cache_control_max_age_1y())
             .body(build_log));
     }
-    Ok(HttpResponse::NotFound().finish())
+    Ok(HttpResponse::NotFound()
+        .insert_header(cache_control_no_store())
+        .finish())
 }
 
 async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(nixhash(&hash));
-    Ok(HttpResponse::Ok().json(libnixstore::get_nar_list(&store_path)?))
+    Ok(HttpResponse::Ok()
+        .insert_header(cache_control_no_store())
+        .json(libnixstore::get_nar_list(&store_path)?))
 }
 
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
