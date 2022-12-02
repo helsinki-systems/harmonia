@@ -97,7 +97,7 @@ fn string_to_opt(v: String) -> Option<String> {
 pub struct PathInfo {
     /// The deriver of this path, if one exists.
     pub drv: Option<String>,
-    /// The result executing `nix-store --dump` on this path and hashing its output.  This string
+    /// The result of executing `nix-store --dump` on this path and hashing its output.  This string
     /// can be either a hexidecimal or base32 string, depending on the arguments passed to
     /// `query_path_info()`.
     pub narhash: String,
