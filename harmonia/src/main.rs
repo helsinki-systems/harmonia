@@ -341,7 +341,7 @@ async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn E
 async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(nixhash(&hash));
     Ok(HttpResponse::Ok()
-        .insert_header(cache_control_no_store())
+        .insert_header(cache_control_max_age_1y())
         .json(libnixstore::get_nar_list(&store_path)?))
 }
 
