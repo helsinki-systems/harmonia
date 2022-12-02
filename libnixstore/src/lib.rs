@@ -95,22 +95,44 @@ fn string_to_opt(v: String) -> Option<String> {
 }
 
 pub struct PathInfo {
+    /// The deriver of this path, if one exists.
     pub drv: Option<String>,
+    /// The result executing `nix-store --dump` on this path and hashing its output.  This string
+    /// can be either a hexidecimal or base32 string, depending on the arguments passed to
+    /// `query_path_info()`.
     pub narhash: String,
+    /// The time at which this store path was registered.
     pub time: i64,
+    /// The size of the nar archive which would be produced by applying `nix-store --dump` to this
+    /// path.
     pub size: usize,
+    /// The store paths referenced by this path.
     pub refs: Vec<String>,
+    /// The signatures on this store path; "note: not necessarily verified"
     pub sigs: Vec<String>,
+    /// Indicates if this store-path is input-addressed (`None`) or content-addressed (`Some`).  The
+    /// `String` value contains the content hash as well as "some other bits of data"; see
+    /// `path-info.hh` for details
     pub ca: Option<String>,
 }
 
 pub struct Drv {
+    /// The mapping from output names to to realised outpaths, or `None` for outputs which are not
+    /// realised in this store.
     pub outputs: std::collections::HashMap<String, Option<String>>,
+    /// The paths of this derivation's input derivations
     pub input_drvs: Vec<String>,
+    /// The paths of this derivation's input sources; these are files which enter the nix store as a
+    /// result of `nix-store --add` or a `./path` reference.
     pub input_srcs: Vec<String>,
+    /// The `system` field of the derivation
     pub platform: String,
+    /// The `builder` field of the derivation, which is executed in order to realise the
+    /// derivation's outputs.
     pub builder: String,
+    /// The arguments passed to `builder`.
     pub args: Vec<String>,
+    /// The environment with which the `builder` is executed.
     pub env: std::collections::HashMap<String, String>,
 }
 
@@ -156,7 +178,9 @@ pub fn query_deriver(path: &str) -> Option<String> {
 }
 
 #[inline]
-/// Query information about a valid path. It is permitted to omit the name part of the store path.
+/// Query information about a valid path. It is permitted to omit the name part of the store path.  The `base32` field affects only
+/// the `narHash` field of the result; if set to `false` this field will contain a hexadecimal string rather than nix's usual base32
+/// encoding.
 pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, cxx::Exception> {
     let res = ffi::query_path_info(path, base32)?;
     Ok(PathInfo {
@@ -196,7 +220,8 @@ pub fn query_path_from_hash_part(hash_part: &str) -> Option<String> {
 ///
 /// That is, all paths than can be directly or indirectly reached from it. If `flip_direction` is
 /// true, the set of paths that can reach `storePath` is returned; that is, the closures under the
-/// `referrers` relation instead of the `references` relation is returned.
+/// `referrers` relation instead of the `references` relation is returned.  If `include_outputs` is
+/// `true` then closure will additionally include all outputs of every derivation in the closure.
 pub fn compute_fs_closure(
     flip_direction: bool,
     include_outputs: bool,
