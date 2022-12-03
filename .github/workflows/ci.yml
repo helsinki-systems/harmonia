@@ -7,6 +7,22 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    name: Check rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
   build:
     name: Build and Test Job
     timeout-minutes: 360
