@@ -425,9 +425,9 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, Box<dyn
         let (_sign_host, sign_key64) = sign_key
             .split_once(':')
             .ok_or("Sign key does not contain a ':'")?;
-        let sign_keyno64 = base64::decode(sign_key64)?;
+        let sign_keyno64 = base64::decode(sign_key64.trim())?;
         if sign_keyno64.len() == 64 {
-            return Ok(Some(sign_key.clone()));
+            return Ok(Some(sign_key.to_owned()));
         }
         log::error!("invalid signing key provided. signing disabled");
     }
