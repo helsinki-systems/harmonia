@@ -7,14 +7,45 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    name: Check rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  lint:
+    name: Cargo check and Cargo clippy
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: cachix/install-nix-action@v18
+      with:
+        nix_path: nixpkgs=channel:nixos-22.11
+    - name: check
+      run: nix-shell --run 'cargo check'
+    - name: clippy
+      run: nix-shell --run 'cargo check'
+
   build:
     name: Build and Test Job
-    timeout-minutes: 360
+    timeout-minutes: 60
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        nixpkgs: [ nixos-22.05, nixos-unstable ]
+        nixpkgs: [ nixos-22.11, nixos-unstable ]
 
     steps:
     - uses: actions/checkout@v3

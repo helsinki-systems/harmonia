@@ -7,12 +7,13 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    nixVersions.nix_2_9
+    nix
     nlohmann_json
     libsodium
     boost
     openssl
   ];
+  doCheck = false;
 
   meta = with lib; {
     description = "Nix binary cache implemented in rust using libnix-store";
