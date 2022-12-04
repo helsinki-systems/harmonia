@@ -21,8 +21,8 @@ in
 
     client01 = { config, pkgs, lib, ... }:
       {
-        nix.requireSignedBinaryCaches = false;
-        nix.binaryCaches = lib.mkForce [ "http://harmonia:5000" ];
+        nix.settings.require-sigs = false;
+        nix.settings.substituters = lib.mkForce [ "http://harmonia:5000" ];
         nix.extraOptions = ''
           experimental-features = nix-command
         '';
