@@ -3,6 +3,7 @@ use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, path::Path};
 use tokio::sync;
+use libnixstore::Radix;
 
 // TODO(conni2461): conf file
 // - users to restrict access
@@ -112,7 +113,7 @@ fn fingerprint_path(
     if nar_hash.len() == 71 {
         nar_hash = format!(
             "sha256:{}",
-            libnixstore::convert_hash("sha256", &nar_hash[7..], true)?
+            libnixstore::convert_hash("sha256", &nar_hash[7..], Radix::default())?
         );
     }
 
@@ -163,7 +164,7 @@ fn query_narinfo(
     hash: &str,
     sign_key: Option<&str>,
 ) -> Result<NarInfo, Box<dyn Error>> {
-    let path_info = libnixstore::query_path_info(store_path, true)?;
+    let path_info = libnixstore::query_path_info(store_path, Radix::default())?;
     let mut res = NarInfo {
         store_path: store_path.into(),
         url: format!(
@@ -261,7 +262,7 @@ async fn stream_nar(
 ) -> Result<HttpResponse, Box<dyn Error>> {
     let store_path = some_or_404!(libnixstore::query_path_from_hash_part(&info.hash));
 
-    let size = libnixstore::query_path_info(&store_path, true)?.size;
+    let size = libnixstore::query_path_info(&store_path, Radix::default())?.size;
     let mut rlength = size;
     let mut offset = 0;
     let mut res = HttpResponse::Ok();
