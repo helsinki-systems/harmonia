@@ -35,7 +35,7 @@ in
     client01 = { config, pkgs, lib, ... }:
       {
         environment.systemPackages = [ copyScript ];
-        nix.binaryCaches = lib.mkForce [ "http://harmonia:5000" ];
+        nix.settings.substituters = lib.mkForce [ "http://harmonia:5000" ];
         nix.extraOptions = ''
           experimental-features = nix-command
         '';
