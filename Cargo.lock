@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "harmonia"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "actix-web",
  "base64",
@@ -645,7 +645,7 @@ checksum = "db6d7e329c562c5dfab7a46a2afabc8b987ab9a4834c9d1ca04dc54c1546cef8"
 
 [[package]]
 name = "libnixstore"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cxx",
  "cxx-build",
