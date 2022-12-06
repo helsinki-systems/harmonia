@@ -1,8 +1,8 @@
 use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
+use libnixstore::Radix;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
 use tokio::sync;
-use libnixstore::Radix;
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
