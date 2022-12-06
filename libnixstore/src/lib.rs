@@ -136,6 +136,23 @@ pub struct Drv {
     pub env: std::collections::HashMap<String, String>,
 }
 
+/// Nix's `libstore` offers two options for representing the
+/// hash-part of store paths.
+pub enum Radix {
+    /// Ordinary hexadecimal, using the 16-character alphabet [0-9a-f]
+    Base16,
+
+    /// The encoding used for filenames directly beneath /nix/store, using a 32-character alphabet
+    Base32,
+}
+
+impl Default for Radix {
+    /// Defaults to base-32 since that is almost always what you want.
+    fn default() -> Self {
+        Self::Base32
+    }
+}
+
 #[inline]
 /// Perform any necessary effectful operation to make the store up and running.
 pub fn init() {
@@ -178,11 +195,10 @@ pub fn query_deriver(path: &str) -> Option<String> {
 }
 
 #[inline]
-/// Query information about a valid path. It is permitted to omit the name part of the store path.  The `base32` field affects only
-/// the `narHash` field of the result; if set to `false` this field will contain a hexadecimal string rather than nix's usual base32
-/// encoding.
-pub fn query_path_info(path: &str, base32: bool) -> Result<PathInfo, cxx::Exception> {
-    let res = ffi::query_path_info(path, base32)?;
+/// Query information about a valid path. It is permitted to omit the name part of the store path.
+/// The `radix` field affects only the `narHash` field of the result.
+pub fn query_path_info(path: &str, radix: Radix) -> Result<PathInfo, cxx::Exception> {
+    let res = ffi::query_path_info(path, matches!(radix, Radix::Base32))?;
     Ok(PathInfo {
         drv: string_to_opt(res.drv),
         narhash: res.narhash,
@@ -261,28 +277,28 @@ pub fn import_paths(fd: i32, dont_check_signs: bool) -> Result<(), cxx::Exceptio
 #[inline]
 /// Compute the hash of the given path. The hash is defined as (essentially)
 /// `hashString(ht, dumpPath(path))`.
-pub fn hash_path(algo: &str, base32: bool, path: &str) -> Result<String, cxx::Exception> {
-    ffi::hash_path(algo, base32, path)
+pub fn hash_path(algo: &str, radix: Radix, path: &str) -> Result<String, cxx::Exception> {
+    ffi::hash_path(algo, matches!(radix, Radix::Base32), path)
 }
 
 #[inline]
 /// Compute the hash of the given file.
-pub fn hash_file(algo: &str, base32: bool, path: &str) -> Result<String, cxx::Exception> {
-    ffi::hash_file(algo, base32, path)
+pub fn hash_file(algo: &str, radix: Radix, path: &str) -> Result<String, cxx::Exception> {
+    ffi::hash_file(algo, matches!(radix, Radix::Base32), path)
 }
 
 #[inline]
 /// Compute the hash of the given string.
-pub fn hash_string(algo: &str, base32: bool, s: &str) -> Result<String, cxx::Exception> {
-    ffi::hash_string(algo, base32, s)
+pub fn hash_string(algo: &str, radix: Radix, s: &str) -> Result<String, cxx::Exception> {
+    ffi::hash_string(algo, matches!(radix, Radix::Base32), s)
 }
 
 #[inline]
 /// Parse the hash from a string representation in the format `[<type>:]<base16|base32|base64>` or
 /// `<type>-<base64>` to a string representation of the hash, in `base-16`, `base-32`. The result
 /// is not prefixed by the hash type.
-pub fn convert_hash(algo: &str, s: &str, to_base_32: bool) -> Result<String, cxx::Exception> {
-    ffi::convert_hash(algo, s, to_base_32)
+pub fn convert_hash(algo: &str, s: &str, to_radix: Radix) -> Result<String, cxx::Exception> {
+    ffi::convert_hash(algo, s, matches!(to_radix, Radix::Base32))
 }
 
 #[inline]
