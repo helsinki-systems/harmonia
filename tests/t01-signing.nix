@@ -45,9 +45,7 @@ in
   testScript = ''
     start_all()
 
-    harmonia.wait_for_open_port(5000)
-
-    client01.succeed("curl -f http://harmonia:5000/version")
+    client01.wait_until_succeeds("curl -f http://harmonia:5000/version")
     client01.succeed("curl -f http://harmonia:5000/nix-cache-info")
 
     client01.wait_until_succeeds("${copyScript}/bin/copy-test ${pgsqlPkg}")
