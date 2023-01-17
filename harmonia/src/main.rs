@@ -428,7 +428,7 @@ fn default_workers() -> usize {
     4
 }
 
-fn default_connection_rate() -> usize {
+fn default_max_connections() -> usize {
     256
 }
 
@@ -443,8 +443,8 @@ struct Config {
     bind: String,
     #[serde(default = "default_workers")]
     workers: usize,
-    #[serde(default = "default_connection_rate")]
-    max_connection_rate: usize,
+    #[serde(default = "default_max_connections", alias = "max_connection_rate")]
+    max_connections: usize,
     #[serde(default = "default_priority")]
     priority: usize,
     #[serde(default)]
@@ -526,7 +526,7 @@ async fn main() -> std::io::Result<()> {
             .route("/nix-cache-info", web::get().to(cache_info))
     })
     .workers(config.workers)
-    .max_connection_rate(config.max_connection_rate)
+    .max_connections(config.max_connections / config.workers)
     .bind(config.bind.clone())?
     .run()
     .await
