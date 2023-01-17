@@ -8,8 +8,107 @@
 )]
 #![forbid(non_ascii_idents)]
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use futures::stream::Stream;
+
+mod mpsc {
+    pub use tokio::sync::mpsc::{
+        error::SendError, unbounded_channel, UnboundedReceiver, UnboundedSender,
+    };
+}
+
+/// Async write request.
+#[derive(Debug)]
+enum AsyncWriteMessage {
+    Data(Vec<u8>),
+    Error(String),
+    Eof,
+}
+
+/// Async write request sender.
+#[derive(Clone)]
+pub struct AsyncWriteSender {
+    sender: mpsc::UnboundedSender<AsyncWriteMessage>,
+}
+
+impl AsyncWriteSender {
+    fn send(&mut self, data: &[u8]) -> Result<(), mpsc::SendError<AsyncWriteMessage>> {
+        let message = AsyncWriteMessage::Data(Vec::from(data));
+        self.sender.send(message)
+    }
+
+    fn eof(&mut self) -> Result<(), mpsc::SendError<AsyncWriteMessage>> {
+        let message = AsyncWriteMessage::Eof;
+        self.sender.send(message)
+    }
+
+    pub(crate) fn rust_error(
+        &mut self,
+        error: impl std::error::Error,
+    ) -> Result<(), impl std::error::Error> {
+        let message = AsyncWriteMessage::Error(error.to_string());
+        self.sender.send(message)
+    }
+}
+
+pub struct AsyncWriteAdapter {
+    receiver: mpsc::UnboundedReceiver<AsyncWriteMessage>,
+    eof: bool,
+}
+
+impl AsyncWriteAdapter {
+    pub fn new() -> (Self, Box<AsyncWriteSender>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+
+        let r = Self {
+            receiver,
+            eof: false,
+        };
+        let sender = Box::new(AsyncWriteSender { sender });
+
+        (r, sender)
+    }
+}
+
+impl Stream for AsyncWriteAdapter {
+    type Item = Result<Vec<u8>, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.receiver.poll_recv(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(message)) => match message {
+                AsyncWriteMessage::Data(v) => Poll::Ready(Some(Ok(v))),
+                AsyncWriteMessage::Error(_) => {
+                    Poll::Ready(Some(Err(std::io::Error::from(std::io::ErrorKind::Other))))
+                }
+                AsyncWriteMessage::Eof => {
+                    self.eof = true;
+                    Poll::Ready(None)
+                }
+            },
+            Poll::Ready(None) => {
+                if !self.eof {
+                    Poll::Ready(Some(Err(std::io::Error::from(
+                        std::io::ErrorKind::BrokenPipe,
+                    ))))
+                } else {
+                    Poll::Ready(None)
+                }
+            }
+        }
+    }
+}
+
 #[cxx::bridge(namespace = "libnixstore")]
 mod ffi {
+    extern "Rust" {
+        type AsyncWriteSender;
+        fn send(self: &mut AsyncWriteSender, data: &[u8]) -> Result<()>;
+        fn eof(self: &mut AsyncWriteSender) -> Result<()>;
+    }
+
     struct InternalPathInfo {
         drv: String,
         narhash: String,
@@ -78,11 +177,7 @@ mod ffi {
         // additional but useful for harmonia
         fn get_build_log(derivation_path: &str) -> Result<String>;
         fn get_nar_list(store_path: &str) -> Result<String>;
-        fn dump_path(
-            store_part: &str,
-            callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool,
-            user_data: usize,
-        );
+        fn dump_path(store_part: &str, sender: Box<AsyncWriteSender>) -> Result<()>;
     }
 }
 
@@ -393,23 +488,17 @@ pub fn get_nar_list(store_path: &str) -> Result<String, cxx::Exception> {
     ffi::get_nar_list(store_path)
 }
 
-fn dump_path_trampoline<F>(data: &[u8], userdata: usize) -> bool
-where
-    F: FnMut(&[u8]) -> bool,
-{
-    let closure = unsafe { &mut *(userdata as *mut std::ffi::c_void).cast::<F>() };
-    closure(data)
-}
-
 #[inline]
 /// Dump a store path in NAR format. The data is passed in chunks to callback
-pub fn dump_path<F>(store_path: &str, callback: F)
-where
-    F: FnMut(&[u8]) -> bool,
-{
-    ffi::dump_path(
-        store_path,
-        dump_path_trampoline::<F>,
-        std::ptr::addr_of!(callback).cast::<std::ffi::c_void>() as usize,
-    );
+pub fn dump_path(store_path: &str) -> AsyncWriteAdapter {
+    let store_path = store_path.to_owned();
+    let (adapter, mut sender) = AsyncWriteAdapter::new();
+
+    tokio::task::spawn_blocking(move || {
+        if let Err(e) = ffi::dump_path(&store_path, sender.clone()) {
+            let _ = sender.rust_error(e);
+        }
+    });
+
+    adapter
 }

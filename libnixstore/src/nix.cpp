@@ -348,37 +348,39 @@ rust::String get_build_log(rust::Str derivation_path) {
 rust::String get_nar_list(rust::Str store_path) {
   nlohmann::json j = {
       {"version", 1},
-      {"root", listNar(get_store()->getFSAccessor(), STRING_VIEW(store_path), true)},
+      {"root",
+       listNar(get_store()->getFSAccessor(), STRING_VIEW(store_path), true)},
   };
 
   return j.dump();
 }
 
-class StopDump : public std::exception {
+using RBasePathSlice = rust::Slice<const unsigned char>;
+
+struct RustSink : nix::Sink {
+  rust::Box<AsyncWriteSender> sender;
+
 public:
-  const char *what() {
-    return "Stop dumping nar";
+  RustSink(rust::Box<AsyncWriteSender> sender) : sender(std::move(sender)) {
+  }
+
+  void operator()(std::string_view data) override {
+    RBasePathSlice s((const unsigned char *)data.data(), data.size());
+
+    this->sender->send(s);
+  }
+
+  void eof() {
+    this->sender->eof();
   }
 };
 
-void dump_path(
-    rust::Str store_path,
-    rust::Fn<bool(rust::Slice<const uint8_t>, long unsigned int)> callback,
-    size_t user_data) {
-  nix::LambdaSink sink([=](std::string_view v) {
-    auto data = rust::Slice<const uint8_t>((const uint8_t *)v.data(), v.size());
-    bool ret = (*callback)(data, user_data);
-    if (!ret) {
-      throw StopDump();
-    }
-  });
+void dump_path(rust::Str store_path, rust::Box<AsyncWriteSender> sender) {
+  RustSink sink(std::move(sender));
+  std::string_view sv(STRING_VIEW(store_path));
 
-  try {
-    auto store = get_store();
-    store->narFromPath(store->parseStorePath(STRING_VIEW(store_path)), sink);
-  } catch (StopDump &e) {
-    // Intentionally do nothing. We're only using the exception as a
-    // short-circuiting mechanism.
-  }
+  auto store = get_store();
+  store->narFromPath(store->parseStorePath(STRING_VIEW(store_path)), sink);
+	sink.eof();
 }
 } // namespace libnixstore

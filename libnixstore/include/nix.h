@@ -37,9 +37,9 @@ rust::String get_store_dir();
 
 rust::String get_build_log(rust::Str derivation_path);
 rust::String get_nar_list(rust::Str store_path);
-void dump_path(
-    rust::Str store_part,
-    rust::Fn<bool(rust::Slice<const uint8_t>, long unsigned int)> callback,
-    size_t userdata);
+
+struct AsyncWriteSender;
+
+void dump_path(rust::Str store_part, rust::Box<AsyncWriteSender> sender);
 
 } // namespace libnixstore

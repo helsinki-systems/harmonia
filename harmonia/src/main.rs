@@ -1,8 +1,10 @@
 use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
-use libnixstore::Radix;
+use libnixstore::{AsyncWriteAdapter, Radix};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
-use tokio::sync;
+
+use async_stream::try_stream;
+use futures_core::stream::Stream;
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
@@ -248,6 +250,31 @@ pub struct NarRequest {
     hash: String,
 }
 
+fn into_ranged_stream(
+    input: AsyncWriteAdapter,
+    offset: usize,
+    rlength: usize,
+) -> impl Stream<Item = std::io::Result<web::Bytes>> {
+    try_stream! {
+        let mut send = 0;
+        for await data in input {
+            let data = data.unwrap();
+            let length = data.len();
+            if offset <= send + length {
+                let start = if offset > send { offset - send } else { 0 };
+                let end = if (offset + rlength) < (send + length) {
+                    start + rlength
+                } else {
+                    length
+                };
+                yield web::Bytes::from(data).slice(start..end);
+            } else {
+                send += length;
+            }
+        }
+    }
+}
+
 async fn stream_nar(
     _nar_hash: web::Path<String>,
     req: HttpRequest,
@@ -285,37 +312,13 @@ async fn stream_nar(
             return Ok(res.status(http::StatusCode::BAD_REQUEST).finish());
         };
     };
-
-    let (tx, rx) =
-        sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
-    let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let mut send = 0;
-    let closure = |data: &[u8]| {
-        let length = data.len();
-        if offset <= send + length {
-            let start = if offset > send { offset - send } else { 0 };
-            let end = if (offset + rlength) < (send + length) {
-                start + rlength
-            } else {
-                length
-            };
-            // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
-            let data = Vec::from(data);
-            tx.send(Ok(web::Bytes::from(data).slice(start..end)))
-                .is_ok()
-        } else {
-            send += length;
-            true
-        }
-    };
-
-    libnixstore::dump_path(&store_path, closure);
+    let stream = into_ranged_stream(libnixstore::dump_path(&store_path), offset, rlength);
 
     Ok(res
         .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
         .insert_header((http::header::ACCEPT_RANGES, "bytes"))
         .insert_header(cache_control_max_age_1y())
-        .body(actix_web::body::SizedStream::new(rlength as u64, rx)))
+        .body(actix_web::body::SizedStream::new(rlength as u64, stream)))
 }
 
 async fn get_build_log(drv: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {

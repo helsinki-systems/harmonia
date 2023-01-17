@@ -10,6 +10,8 @@ license = "MIT"
 
 [dependencies]
 cxx = "1"
+tokio = { version = "1", features = ["fs","io-util","process","sync","rt"] }
+futures = "0.3.25"
 
 [build-dependencies]
 cxx-build = "1"
