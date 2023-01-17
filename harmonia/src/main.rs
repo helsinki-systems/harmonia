@@ -1,4 +1,5 @@
 use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
+use base64::Engine as _;
 use libnixstore::Radix;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
@@ -488,7 +489,8 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, ConfigE
         let (_sign_host, sign_key64) = sign_key
             .split_once(':')
             .ok_or_else(|| ConfigError::new("Sign key does not contain a ':'".into()))?;
-        let sign_keyno64 = base64::decode(sign_key64.trim())
+        let sign_keyno64 = base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(sign_key64.trim())
             .map_err(|e| ConfigError::new(format!("Couldn't base64::decode sign key: {}", e)))?;
         if sign_keyno64.len() == 64 {
             return Ok(Some(sign_key.to_owned()));
