@@ -3,6 +3,7 @@
 #include <nix/config.h>
 #include <nix/derivations.hh>
 #include <nix/globals.hh>
+#include <nix/shared.hh>
 #include <nix/store-api.hh>
 #include <nix/log-store.hh>
 #include <nix/content-address.hh>
@@ -25,6 +26,7 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 static nix::ref<nix::Store> get_store() {
   static std::shared_ptr<nix::Store> _store;
   if (!_store) {
+    nix::initNix();
     nix::loadConfFile();
     nix::settings.lockCPU = false;
     _store = nix::openStore();
