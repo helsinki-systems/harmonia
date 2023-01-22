@@ -7,7 +7,7 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    nix
+    (if lib.versionAtLeast nix.version nixVersions.nix_2_12.version then nix else nixVersions.nix_2_12)
     nlohmann_json
     libsodium
     boost

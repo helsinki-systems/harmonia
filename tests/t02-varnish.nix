@@ -1,5 +1,5 @@
-{ pkgs, ... }:
-
+(import ./lib.nix)
+({ pkgs, ... }:
 let
   testPkg = pkgs.writeShellScriptBin "varnish-test" ''
     echo hello world
@@ -44,13 +44,10 @@ in
   testScript = ''
     start_all()
 
-    harmonia.wait_for_open_port(80)
-    harmonia.wait_for_open_port(5000)
-
-    client01.succeed("curl -f http://harmonia/version")
+    client01.wait_until_succeeds("curl -f http://harmonia/version")
     client01.succeed("curl -f http://harmonia/nix-cache-info")
 
     client01.wait_until_succeeds("nix copy --from http://harmonia/ ${testPkg}")
     client01.succeed("${testPkg}/bin/varnish-test")
   '';
-}
+})

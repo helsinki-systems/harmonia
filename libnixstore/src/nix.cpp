@@ -3,6 +3,7 @@
 #include <nix/config.h>
 #include <nix/derivations.hh>
 #include <nix/globals.hh>
+#include <nix/shared.hh>
 #include <nix/store-api.hh>
 #include <nix/log-store.hh>
 #include <nix/content-address.hh>
@@ -10,7 +11,6 @@
 #include <nix/crypto.hh>
 
 #include <nix/nar-accessor.hh>
-#include <nix/json.hh>
 
 #include <nlohmann/json.hpp>
 #include <sodium.h>
@@ -26,6 +26,7 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 static nix::ref<nix::Store> get_store() {
   static std::shared_ptr<nix::Store> _store;
   if (!_store) {
+    nix::initNix();
     nix::loadConfFile();
     nix::settings.lockCPU = false;
     _store = nix::openStore();
@@ -347,15 +348,12 @@ rust::String get_build_log(rust::Str derivation_path) {
 }
 
 rust::String get_nar_list(rust::Str store_path) {
-  std::ostringstream jsonOut;
+  nlohmann::json j = {
+      {"version", 1},
+      {"root", listNar(get_store()->getFSAccessor(), STRING_VIEW(store_path), true)},
+  };
 
-  nix::JSONObject jsonRoot(jsonOut);
-  jsonRoot.attr("version", 1);
-
-  auto res = jsonRoot.placeholder("root");
-  listNar(res, get_store()->getFSAccessor(), STRING_VIEW(store_path), true);
-
-  return jsonOut.str();
+  return j.dump();
 }
 
 class StopDump : public std::exception {

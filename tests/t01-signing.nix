@@ -1,8 +1,7 @@
-{ pkgs, ... }:
-
+(import ./lib.nix)
+({ pkgs, ... }:
 let
-  pgsqlPkg = pkgs.postgresql;
-
+  inherit (pkgs) hello;
   copyScript = pkgs.writeShellScriptBin "copy-test" ''
     set -e
     PUBKEY=$(cat ${./cache.pk})
@@ -29,7 +28,7 @@ in
         };
 
         networking.firewall.allowedTCPPorts = [ 5000 ];
-        environment.systemPackages = [ pgsqlPkg ];
+        environment.systemPackages = [ hello ];
       };
 
     client01 = { config, pkgs, lib, ... }:
@@ -45,12 +44,10 @@ in
   testScript = ''
     start_all()
 
-    harmonia.wait_for_open_port(5000)
-
-    client01.succeed("curl -f http://harmonia:5000/version")
+    client01.wait_until_succeeds("curl -f http://harmonia:5000/version")
     client01.succeed("curl -f http://harmonia:5000/nix-cache-info")
 
-    client01.wait_until_succeeds("${copyScript}/bin/copy-test ${pgsqlPkg}")
-    client01.succeed("${pgsqlPkg}/bin/psql --version")
+    client01.wait_until_succeeds("${copyScript}/bin/copy-test ${hello}")
+    client01.succeed("${hello}/bin/hello --version")
   '';
-}
+})
