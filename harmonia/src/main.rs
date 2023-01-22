@@ -474,7 +474,7 @@ impl std::fmt::Display for ConfigError {
 fn init_config() -> Result<Config, ConfigError> {
     let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
     let mut settings: Config = toml::from_str(
-        &read_to_string(&settings_file)
+        &read_to_string(settings_file)
             .map_err(|e| ConfigError::new(format!("Couldn't read config file: {}", e)))?,
     )
     .map_err(|e| ConfigError::new(format!("Couldn't parse config file: {}", e)))?;
