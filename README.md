@@ -13,7 +13,13 @@
 ### Whole application
 
 ```bash
-nix-shell --run cargo b
+nix build -L
+```
+
+### Get a development environment:
+
+``` bash
+nix develop
 ```
 
 ## Configuration
@@ -46,7 +52,7 @@ is `info,actix_web=debug`. To only log errors use the following
 ## Run tests
 
 ```bash
-nix-build -E 'with import <nixpkgs> {}; callPackage ./test.nix {nixpkgs = pkgs;}'
+nix flake check -L
 ```
 
 ## Inspiration
