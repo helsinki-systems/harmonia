@@ -1,11 +1,5 @@
 (import ./lib.nix)
-({ pkgs, ... }:
-let
-  testPkg = pkgs.writeShellScriptBin "simple00-test" ''
-    echo hello world
-  '';
-in
-{
+({pkgs, ...} : {
   name = "t00-simple";
 
   nodes = {
@@ -16,7 +10,7 @@ in
         services.harmonia.enable = true;
 
         networking.firewall.allowedTCPPorts = [ 5000 ];
-        environment.systemPackages = [ testPkg ];
+        environment.systemPackages = [ pkgs.hello ];
       };
 
     client01 = { config, pkgs, lib, ... }:
@@ -38,12 +32,12 @@ in
     client01.wait_until_succeeds("curl -f http://harmonia:5000/version")
     client01.succeed("curl -f http://harmonia:5000/nix-cache-info")
 
-    client01.wait_until_succeeds("nix copy --from http://harmonia:5000/ ${testPkg}")
-    out = client01.wait_until_succeeds("curl http://harmonia:5000/${hashPart testPkg}.ls")
+    client01.wait_until_succeeds("nix copy --from http://harmonia:5000/ ${pkgs.hello}")
+    out = client01.wait_until_succeeds("curl http://harmonia:5000/${hashPart pkgs.hello}.ls")
     data = json.loads(out)
     print(out)
     assert data["version"] == 1, "version is not correct"
     assert data["root"]["entries"]["bin"]["type"] == "directory", "expect bin directory in listing"
-    client01.succeed("${testPkg}/bin/simple00-test")
+    client01.succeed("${pkgs.hello}/bin/hello")
   '';
 })

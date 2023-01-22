@@ -1,11 +1,5 @@
 (import ./lib.nix)
-({ pkgs, ... }:
-let
-  testPkg = pkgs.writeShellScriptBin "varnish-test" ''
-    echo hello world
-  '';
-in
-{
+({ pkgs, ...}: {
   name = "t02-varnish";
 
   nodes = {
@@ -28,7 +22,7 @@ in
         };
 
         networking.firewall.allowedTCPPorts = [ 80 ];
-        environment.systemPackages = [ testPkg ];
+        environment.systemPackages = [ pkgs.hello ];
       };
 
     client01 = { config, pkgs, lib, ... }:
@@ -47,7 +41,7 @@ in
     client01.wait_until_succeeds("curl -f http://harmonia/version")
     client01.succeed("curl -f http://harmonia/nix-cache-info")
 
-    client01.wait_until_succeeds("nix copy --from http://harmonia/ ${testPkg}")
-    client01.succeed("${testPkg}/bin/varnish-test")
+    client01.wait_until_succeeds("nix copy --from http://harmonia/ ${pkgs.hello}")
+    client01.succeed("${pkgs.hello}/bin/hello")
   '';
 })
