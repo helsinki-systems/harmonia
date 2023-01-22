@@ -1,5 +1,5 @@
-{ pkgs, ... }:
-
+(import ./lib.nix)
+({ pkgs, ... }:
 let
   testPkg = pkgs.writeShellScriptBin "simple00-test" ''
     echo hello world
@@ -46,4 +46,4 @@ in
     assert data["root"]["entries"]["bin"]["type"] == "directory", "expect bin directory in listing"
     client01.succeed("${testPkg}/bin/simple00-test")
   '';
-}
+})

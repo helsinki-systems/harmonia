@@ -1,5 +1,5 @@
-{ pkgs, ... }:
-
+(import ./lib.nix)
+({ pkgs, ... }:
 let
   testPkg = pkgs.writeShellScriptBin "varnish-test" ''
     echo hello world
@@ -50,4 +50,4 @@ in
     client01.wait_until_succeeds("nix copy --from http://harmonia/ ${testPkg}")
     client01.succeed("${testPkg}/bin/varnish-test")
   '';
-}
+})

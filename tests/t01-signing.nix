@@ -1,5 +1,5 @@
-{ pkgs, ... }:
-
+(import ./lib.nix)
+({ pkgs, ... }:
 let
   inherit (pkgs) hello;
   copyScript = pkgs.writeShellScriptBin "copy-test" ''
@@ -50,4 +50,4 @@ in
     client01.wait_until_succeeds("${copyScript}/bin/copy-test ${hello}")
     client01.succeed("${hello}/bin/hello --version")
   '';
-}
+})
