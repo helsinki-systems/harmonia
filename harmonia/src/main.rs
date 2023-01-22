@@ -3,6 +3,8 @@ use libnixstore::Radix;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
 use tokio::sync;
+use base64::engine::general_purpose;
+use base64::Engine;
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
@@ -489,7 +491,7 @@ fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, ConfigE
         let (_sign_host, sign_key64) = sign_key
             .split_once(':')
             .ok_or_else(|| ConfigError::new("Sign key does not contain a ':'".into()))?;
-        let sign_keyno64 = base64::decode(sign_key64.trim())
+        let sign_keyno64 = general_purpose::STANDARD.decode(sign_key64.trim())
             .map_err(|e| ConfigError::new(format!("Couldn't base64::decode sign key: {}", e)))?;
         if sign_keyno64.len() == 64 {
             return Ok(Some(sign_key.to_owned()));
