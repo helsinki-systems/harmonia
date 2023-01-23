@@ -20,9 +20,13 @@
       perSystem = { config, pkgs, ... }: {
         packages.harmonia = pkgs.callPackage ./. {};
         packages.default = config.packages.harmonia;
-        checks = import ./tests/default.nix {
+        checks = (import ./tests/default.nix {
           inherit pkgs;
           inherit (inputs) self;
+        }) // {
+          clippy = config.packages.harmonia.override ({
+            enableClippy = true;
+          });
         };
         devShells.default = pkgs.callPackage ./shell.nix {};
       };
