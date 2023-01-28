@@ -17,5 +17,8 @@ pkgs.mkShell {
     openssl
   ];
 
+  # provide a dummy configuration for testing
+  CONFIG_FILE = pkgs.writeText "config.toml" "";
+
   RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
 }
