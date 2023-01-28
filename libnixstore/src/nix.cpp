@@ -26,7 +26,17 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 static nix::ref<nix::Store> get_store() {
   static std::shared_ptr<nix::Store> _store;
   if (!_store) {
+    sigset_t savedSignalMask = {};
+    // nix tries to handle signals for us. However we are already doing this
+    // ourself in tokio
+    if (sigprocmask(SIG_BLOCK, nullptr, &savedSignalMask)) {
+      throw nix::SysError("querying signal mask");
+    }
     nix::initNix();
+    if (sigprocmask(SIG_SETMASK, &savedSignalMask, nullptr)) {
+        throw nix::SysError("restoring signals");
+    }
+
     nix::loadConfFile();
     nix::settings.lockCPU = false;
     _store = nix::openStore();
