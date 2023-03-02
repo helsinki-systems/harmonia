@@ -2,7 +2,7 @@ use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
 use libnixstore::Radix;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
-use tokio::sync;
+use tokio::{sync, task};
 use base64::engine::general_purpose;
 use base64::Engine;
 
@@ -250,6 +250,16 @@ pub struct NarRequest {
     hash: String,
 }
 
+// We send this error across thread boundaries, so it must be Send + Sync
+#[derive(Debug)]
+enum ThreadSafeError {}
+impl std::error::Error for ThreadSafeError {}
+impl std::fmt::Display for ThreadSafeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "error")
+    }
+}
+
 async fn stream_nar(
     _nar_hash: web::Path<String>,
     req: HttpRequest,
@@ -259,11 +269,15 @@ async fn stream_nar(
 
     let size = libnixstore::query_path_info(&store_path, Radix::default())?.size;
     let mut rlength = size;
-    let mut offset = 0;
+    let offset;
     let mut res = HttpResponse::Ok();
 
+    let (tx, rx) =
+        sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, ThreadSafeError>>();
+    let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+
     // Credit actix_web actix-files: https://github.com/actix/actix-web/blob/master/actix-files/src/named.rs#L525
-    if let Some(ranges) = req.headers().get(http::header::RANGE) {
+    let closure = if let Some(ranges) = req.headers().get(http::header::RANGE) {
         if let Ok(ranges_header) = ranges.to_str() {
             if let Ok(ranges) = HttpRange::parse(ranges_header, rlength) {
                 rlength = ranges[0].length;
@@ -286,32 +300,35 @@ async fn stream_nar(
         } else {
             return Ok(res.status(http::StatusCode::BAD_REQUEST).finish());
         };
-    };
+        let mut send = 0;
 
-    let (tx, rx) =
-        sync::mpsc::unbounded_channel::<Result<actix_web::web::Bytes, actix_web::Error>>();
-    let rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let mut send = 0;
-    let closure = |data: &[u8]| {
-        let length = data.len();
-        if offset <= send + length {
-            let start = if offset > send { offset - send } else { 0 };
-            let end = if (offset + rlength) < (send + length) {
-                start + rlength
+        // we keep this closure extra to avoid unaligned copies in the non-range request case.
+        Box::new(move |data: &[u8]| {
+            let length = data.len();
+            if offset <= send + length {
+                let start = if offset > send { offset - send } else { 0 };
+                let end = if (offset + rlength) < (send + length) {
+                    start + rlength
+                } else {
+                    length
+                };
+                // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
+                tx.send(Ok(web::Bytes::copy_from_slice(&data[start..end])))
+                  .is_ok()
             } else {
-                length
-            };
-            // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
-            let data = Vec::from(data);
-            tx.send(Ok(web::Bytes::from(data).slice(start..end)))
-                .is_ok()
-        } else {
-            send += length;
-            true
-        }
+                send += length;
+                true
+            }
+        }) as Box<dyn FnMut(&[u8]) -> bool + Send + Sync>
+    } else {
+        Box::new(move |data: &[u8]| {
+            tx.send(Ok(web::Bytes::copy_from_slice(data))).is_ok()
+        }) as Box<dyn FnMut(&[u8]) -> bool + Send + Sync>
     };
 
-    libnixstore::dump_path(&store_path, closure);
+    task::spawn(async move {
+        libnixstore::dump_path(&store_path, closure);
+    });
 
     Ok(res
         .insert_header((http::header::CONTENT_TYPE, "application/x-nix-archive"))
