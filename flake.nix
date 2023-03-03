@@ -2,6 +2,10 @@
   description = "Nix binary cache implemented in rust using libnix-store";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
+  inputs.flake-parts = {
+    url = "github:hercules-ci/flake-parts";
+    inputs.nixpkgs-lib.follows = "nixpkgs";
+  };
 
   nixConfig.extra-substituters = [
     "https://cache.garnix.io"

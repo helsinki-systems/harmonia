@@ -2,7 +2,7 @@
 
 pkgs.mkShell {
   name = "harmonia";
-  nativeBuildInputs = with pkgs; [ rustc cargo gcc pkg-config ];
+  nativeBuildInputs = with pkgs; [ rustc cargo pkg-config ];
   buildInputs = with pkgs; [
     (if lib.versionAtLeast nix.version nixVersions.nix_2_12.version then nix else nixVersions.nix_2_12)
     nlohmann_json
