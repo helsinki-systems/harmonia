@@ -312,7 +312,6 @@ async fn stream_nar(
                 } else {
                     length
                 };
-                // The copy here is not idea but due to async ownership tracking with C++ would be kind of hard.
                 tx.send(Ok(web::Bytes::copy_from_slice(&data[start..end])))
                   .is_ok()
             } else {
@@ -322,6 +321,8 @@ async fn stream_nar(
         }) as Box<dyn FnMut(&[u8]) -> bool + Send + Sync>
     } else {
         Box::new(move |data: &[u8]| {
+            // The copy here is not ideal but due async ownership tracking
+            // with C++ seems impossible here.
             tx.send(Ok(web::Bytes::copy_from_slice(data))).is_ok()
         }) as Box<dyn FnMut(&[u8]) -> bool + Send + Sync>
     };
