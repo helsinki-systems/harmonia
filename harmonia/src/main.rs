@@ -18,7 +18,6 @@ fn nixhash(hash: &str) -> Option<String> {
     libnixstore::query_path_from_hash_part(hash)
 }
 
-
 const BOOTSTRAP_SOURCE: &str = r#"
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css"
         rel="stylesheet"
@@ -32,7 +31,6 @@ const BOOTSTRAP_SOURCE: &str = r#"
 const CARGO_NAME: &str = env!("CARGO_PKG_NAME");
 const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CARGO_HOME_PAGE: &str = env!("CARGO_PKG_HOMEPAGE");
-
 
 fn cache_control_max_age(max_age: u32) -> http::header::CacheControl {
     http::header::CacheControl(vec![http::header::CacheDirective::MaxAge(max_age)])
