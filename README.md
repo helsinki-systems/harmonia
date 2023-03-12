@@ -7,6 +7,13 @@
 - .ls file streaming
   - Note: doesn't contain `narOffset` in json response but isn't needed for
     `nix-index`
+    
+## Features added by this fork
+
+- Speedup serving of smaller nar files by generating nar files using nix as a library instead of starting
+  a `nix-store` process for each nar file
+- Add `/serve/<narhash>/` endpoint to allow serving the content of package. 
+  Also discovers index.html to allow serving websites directly from the nix store.
 
 ## Build
 
@@ -54,6 +61,7 @@ is `info,actix_web=debug`. To only log errors use the following
 ```bash
 nix flake check -L
 ```
+
 
 ## Inspiration
 
