@@ -84,29 +84,27 @@ pub(crate) fn directory_listing(
 <html lang="en">
 
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <title>Nix binary cache ({CARGO_NAME} {CARGO_VERSION})</title>
-  {BOOTSTRAP_SOURCE}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Nix binary cache ({CARGO_NAME} {CARGO_VERSION})</title>
+    {BOOTSTRAP_SOURCE}
 </head>
 <body>
-  <div class="container mt-4">
-     <h1>{index_of}</h1>
-     <hr>
-
-     <ul>
-     <table class="table table-striped">
-             <thead>
-                     <tr>
-                             <th>Name</th>
-                             <th>Size</th>
-                     </tr>
-             </thead>
-             <tbody>
-             {rows}
-             </tbody>
-     </table>
-   </div>
+    <div class="container mt-4">
+        <h1>{index_of}</h1>
+        <hr>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+    </div>
 </body>"#,
     );
     Ok(HttpResponse::Ok()
