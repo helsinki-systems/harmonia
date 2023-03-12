@@ -33,6 +33,19 @@ macro_rules! encode_file_name {
     };
 }
 
+// human readable file size
+fn file_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.2} KiB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MiB", bytes as f64 / 1024.0 / 1024.0)
+    } else {
+        format!("{:.2} GiB", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
+    }
+}
+
 pub(crate) fn directory_listing(url_prefix: &Path, fs_path: &Path) -> ServerResult {
     let path_without_store = fs_path
         .strip_prefix(libnixstore::get_store_dir())
@@ -63,9 +76,10 @@ pub(crate) fn directory_listing(url_prefix: &Path, fs_path: &Path) -> ServerResu
                     encode_file_name!(entry),
                 );
             } else {
+                let size = file_size(metadata.len());
                 let _ = writeln!(
                     rows,
-                    "<tr><td><a href=\"{}\">{}</a></td><td>-</td></tr>",
+                    "<tr><td><a href=\"{}\">{}</a></td><td>{size}</td></tr>",
                     encode_file_url!(p),
                     encode_file_name!(entry),
                 );
