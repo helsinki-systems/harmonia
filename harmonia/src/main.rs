@@ -428,6 +428,10 @@ async fn version() -> Result<HttpResponse, Box<dyn Error>> {
     )))
 }
 
+async fn health() -> Result<HttpResponse, Box<dyn Error>> {
+    Ok(HttpResponse::Ok().body("OK\n"))
+}
+
 async fn cache_info(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
     Ok(HttpResponse::Ok()
         .insert_header((http::header::CONTENT_TYPE, "text/x-nix-cache-info"))
@@ -546,6 +550,7 @@ async fn main() -> std::io::Result<()> {
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/log/{drv}", web::get().to(get_build_log))
             .route("/version", web::get().to(version))
+            .route("/health", web::get().to(health))
             .route("/nix-cache-info", web::get().to(cache_info))
     })
     .workers(config.workers)
