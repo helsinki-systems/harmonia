@@ -1,6 +1,7 @@
 use actix_files::NamedFile;
 use actix_web::Responder;
 use actix_web::{http, web, App, HttpRequest, HttpResponse, HttpServer};
+use anyhow::{Result, Context};
 use askama_escape::{escape as escape_html_entity, Html};
 use base64::engine::general_purpose;
 use base64::Engine;
@@ -489,44 +490,27 @@ struct Config {
     secret_key: Option<String>,
 }
 
-#[derive(Debug)]
-struct ConfigError {
-    details: String,
-}
 
-impl ConfigError {
-    fn new(details: String) -> Self {
-        Self { details }
-    }
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.details)
-    }
-}
-
-fn init_config() -> Result<Config, ConfigError> {
+fn init_config() -> Result<Config> {
     let settings_file = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "settings.toml".to_owned());
     let mut settings: Config = toml::from_str(
-        &read_to_string(settings_file)
-            .map_err(|e| ConfigError::new(format!("Couldn't read config file: {}", e)))?,
-    )
-    .map_err(|e| ConfigError::new(format!("Couldn't parse config file: {}", e)))?;
+        &read_to_string(&settings_file)
+            .with_context(|| format!("Couldn't read config file '{settings_file}'"))?
+    ).with_context(|| format!("Couldn't parse config file '{settings_file}'"))?;
     settings.secret_key = get_secret_key(settings.sign_key_path.as_deref())?;
     Ok(settings)
 }
 
-fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>, ConfigError> {
+fn get_secret_key(sign_key_path: Option<&str>) -> Result<Option<String>> {
     if let Some(path) = sign_key_path {
         let sign_key = read_to_string(path)
-            .map_err(|e| ConfigError::new(format!("Couldn't read sign_key file: {}", e)))?;
+            .with_context(|| format!("Couldn't read sign_key file '{path}'"))?;
         let (_sign_host, sign_key64) = sign_key
             .split_once(':')
-            .ok_or_else(|| ConfigError::new("Sign key does not contain a ':'".into()))?;
+            .with_context(|| format!("Sign key in '{path}' does not contain a ':'"))?;
         let sign_keyno64 = general_purpose::STANDARD
             .decode(sign_key64.trim())
-            .map_err(|e| ConfigError::new(format!("Couldn't base64::decode sign key: {}", e)))?;
+            .with_context(|| format!("Couldn't base64::decode sign key from '{path}'"))?;
         if sign_keyno64.len() == 64 {
             return Ok(Some(sign_key.to_owned()));
         }
@@ -664,7 +648,8 @@ async fn serve_nar_content(
         };
         directory_listing(&url_prefix, &full_path)
     } else {
-        Ok(NamedFile::open_async(full_path).await?.respond_to(&req))
+        Ok(NamedFile::open_async(&full_path).await
+           .with_context(|| format!("cannot open file: {}", full_path.display()))?.respond_to(&req))
     }
 }
 
@@ -677,6 +662,9 @@ async fn main() -> std::io::Result<()> {
         Ok(v) => web::Data::new(v),
         Err(e) => {
             log::error!("{e}");
+            e.chain()
+                .skip(1)
+                .for_each(|cause| log::error!("because: {}", cause));
             std::process::exit(1);
         }
     };
