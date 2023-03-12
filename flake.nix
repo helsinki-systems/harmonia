@@ -6,6 +6,8 @@
     url = "github:hercules-ci/flake-parts";
     inputs.nixpkgs-lib.follows = "nixpkgs";
   };
+  inputs.treefmt-nix.url = "github:numtide/treefmt-nix";
+  inputs.treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
 
   nixConfig.extra-substituters = [
     "https://cache.garnix.io"
@@ -21,8 +23,11 @@
         "x86_64-linux"
         "aarch64-linux"
       ];
-      perSystem = { config, pkgs, ... }: {
-        packages.harmonia = pkgs.callPackage ./. {};
+      imports = [
+        inputs.treefmt-nix.flakeModule
+      ];
+      perSystem = { lib, config, pkgs, ... }: {
+        packages.harmonia = pkgs.callPackage ./. { };
         packages.default = config.packages.harmonia;
         checks = (import ./tests/default.nix {
           inherit pkgs;
@@ -32,7 +37,30 @@
             enableClippy = true;
           });
         };
-        devShells.default = pkgs.callPackage ./shell.nix {};
+        devShells.default = pkgs.callPackage ./shell.nix { };
+
+        treefmt = {
+          # Used to find the project root
+          projectRootFile = "flake.lock";
+
+          programs.rustfmt.enable = true;
+
+          settings.formatter = {
+            nix = {
+              command = "sh";
+              options = [
+                "-eucx"
+                ''
+                  export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.findutils pkgs.deadnix pkgs.nixpkgs-fmt ]}
+                  deadnix --edit "$@"
+                  nixpkgs-fmt "$@"
+                ''
+                "--"
+              ];
+              includes = [ "*.nix" ];
+            };
+          };
+        };
       };
       flake.nixosModules.harmonia = ./module.nix;
     };
