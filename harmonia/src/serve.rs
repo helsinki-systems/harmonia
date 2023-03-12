@@ -1,7 +1,4 @@
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use actix_files::NamedFile;
 use actix_web::Responder;
@@ -11,7 +8,7 @@ use askama_escape::{escape as escape_html_entity, Html};
 use percent_encoding::{utf8_percent_encode, CONTROLS};
 use std::fmt::Write;
 
-use crate::{nixhash, some_or_404, BOOTSTRAP_SOURCE, CARGO_NAME, CARGO_VERSION};
+use crate::{nixhash, some_or_404, ServerResult, BOOTSTRAP_SOURCE, CARGO_NAME, CARGO_VERSION};
 
 /// Returns percent encoded file URL path.
 macro_rules! encode_file_url {
@@ -36,10 +33,7 @@ macro_rules! encode_file_name {
     };
 }
 
-pub(crate) fn directory_listing(
-    url_prefix: &Path,
-    fs_path: &Path,
-) -> Result<HttpResponse, Box<dyn Error>> {
+pub(crate) fn directory_listing(url_prefix: &Path, fs_path: &Path) -> ServerResult {
     let path_without_store = fs_path
         .strip_prefix(libnixstore::get_store_dir())
         .unwrap_or(fs_path);
@@ -49,7 +43,10 @@ pub(crate) fn directory_listing(
     );
     let mut rows = String::new();
 
-    for entry in fs_path.read_dir()? {
+    for entry in fs_path
+        .read_dir()
+        .with_context(|| format!("cannot read directory: {}", fs_path.display()))?
+    {
         let entry = entry.unwrap();
         let p = match entry.path().strip_prefix(fs_path) {
             Ok(p) => url_prefix.join(p).to_string_lossy().into_owned(),
@@ -112,10 +109,7 @@ pub(crate) fn directory_listing(
         .body(html))
 }
 
-pub(crate) async fn get(
-    path: web::Path<(String, PathBuf)>,
-    req: HttpRequest,
-) -> Result<HttpResponse, Box<dyn Error>> {
+pub(crate) async fn get(path: web::Path<(String, PathBuf)>, req: HttpRequest) -> ServerResult {
     let (hash, dir) = path.into_inner();
     let dir = dir.strip_prefix("/").unwrap_or(&dir);
 
@@ -125,11 +119,23 @@ pub(crate) async fn get(
     } else {
         store_path.join(dir)
     };
+    let full_path = full_path
+        .canonicalize()
+        .with_context(|| format!("cannot resolve nix store path: {}", full_path.display()))?;
+
+    if !full_path.starts_with(libnixstore::get_store_dir()) {
+        return Ok(HttpResponse::NotFound().finish());
+    }
+
     if full_path.is_dir() {
-        if full_path.join("index.html").exists() {
-            return Ok(NamedFile::open_async(full_path.join("index.html"))
-                .await?
-                .respond_to(&req));
+        let index_file = full_path.join("index.html");
+        if let Ok(stat) = index_file.metadata() {
+            if stat.is_file() {
+                return Ok(NamedFile::open_async(&index_file)
+                    .await
+                    .with_context(|| format!("cannot open {}", index_file.display()))?
+                    .respond_to(&req));
+            }
         }
 
         let url_prefix = PathBuf::from("/serve").join(&hash);
