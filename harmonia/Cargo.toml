@@ -24,5 +24,6 @@ tokio-stream = { version = "0.1" }
 http-range = "0.1"
 askama_escape = "0.10.3"
 percent-encoding = "2.2.0"
+anyhow = "1.0.69"
 
 libnixstore = { path = "../libnixstore" }
