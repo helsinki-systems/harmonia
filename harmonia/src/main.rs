@@ -1,4 +1,6 @@
-use actix_web::{http, web, App, HttpServer};
+use std::fmt::Display;
+
+use actix_web::{http, web, App, HttpResponse, HttpServer};
 
 mod buildlog;
 mod cacheinfo;
@@ -61,6 +63,31 @@ macro_rules! some_or_404 {
     };
 }
 pub(crate) use some_or_404;
+
+#[derive(Debug)]
+struct ServerError {
+    err: anyhow::Error,
+}
+
+impl Display for ServerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.err)?;
+        for cause in self.err.chain().skip(1) {
+            writeln!(f, "because: {}", cause)?;
+        }
+        Ok(())
+    }
+}
+
+impl actix_web::error::ResponseError for ServerError {}
+
+impl From<anyhow::Error> for ServerError {
+    fn from(err: anyhow::Error) -> ServerError {
+        ServerError { err }
+    }
+}
+
+type ServerResult = Result<HttpResponse, ServerError>;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
