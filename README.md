@@ -1,5 +1,9 @@
 # harmonia
 
+THIS REPOSITORY HAS MOVED TO
+[https://github.com/nix-community/harmonia](https://github.com/nix-community/harmonia)!
+The helsinki-systems/harmonia repository is unmaintained.
+
 ## Features
 
 - http-ranges support for nar file streaming
