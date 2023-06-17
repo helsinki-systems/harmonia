@@ -8,6 +8,7 @@ The helsinki-systems/harmonia repository is unmaintained.
 
 - http-ranges support for nar file streaming
 - streaming build logs
+- ca-derivations support
 - .ls file streaming
   - Note: doesn't contain `narOffset` in json response but isn't needed for
     `nix-index`

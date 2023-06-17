@@ -3,6 +3,7 @@ use libnixstore::Radix;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs::read_to_string, path::Path};
 use tokio::sync;
+use libnixstore::ExperimentalFeature;
 
 // TODO(conni2461): still missing
 // - handle downloadHash/downloadSize and fileHash/fileSize after implementing compression
@@ -204,12 +205,15 @@ fn query_narinfo(
 
 macro_rules! some_or_404 {
     ($res:expr) => {
+        some_or_404!($res, "missed hash")
+    };
+    ($res:expr, $msg:tt) => {
         match $res {
             Some(val) => val,
             None => {
                 return Ok(HttpResponse::NotFound()
                     .insert_header(cache_control_no_store())
-                    .body("missed hash"))
+                    .body($msg))
             }
         }
     };
@@ -240,6 +244,20 @@ async fn get_narinfo(
             .insert_header(("Nix-Link", narinfo.url))
             .insert_header(cache_control_max_age_1d())
             .body(res))
+    }
+}
+
+async fn get_realisation(id: web::Path<String>) -> Result<HttpResponse, Box<dyn Error>> {
+    let realisation = some_or_404!(
+        libnixstore::query_raw_realisation(&id),
+        "realisation not found"
+    );
+    if realisation.is_empty() {
+        Ok(HttpResponse::NotFound().body("realisation not found"))
+    } else {
+        Ok(HttpResponse::Ok()
+            .insert_header((http::header::CONTENT_TYPE, "application/json"))
+            .body(realisation))
     }
 }
 
@@ -512,9 +530,18 @@ async fn main() -> std::io::Result<()> {
     };
     let config_data = config.clone();
 
+    let ca_derivations = {
+        if libnixstore::is_experimental_feature_enabled(ExperimentalFeature::CaDerivations) {
+            log::info!("Enabling experimental ca-derivations feature");
+            true
+        } else {
+            false
+        }
+    };
+
     log::info!("listening on {}", config.bind);
     HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .app_data(config_data.clone())
             .route("/", web::get().to(index))
             .route("/{hash}.ls", web::get().to(get_nar_list))
@@ -523,7 +550,13 @@ async fn main() -> std::io::Result<()> {
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
             .route("/log/{drv}", web::get().to(get_build_log))
             .route("/version", web::get().to(version))
-            .route("/nix-cache-info", web::get().to(cache_info))
+            .route("/nix-cache-info", web::get().to(cache_info));
+
+        if ca_derivations {
+            app = app.route("/realisations/{id}.doi", web::get().to(get_realisation));
+        }
+
+        app
     })
     .workers(config.workers)
     .max_connection_rate(config.max_connection_rate)

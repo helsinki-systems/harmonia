@@ -10,6 +10,18 @@
 
 #[cxx::bridge(namespace = "libnixstore")]
 mod ffi {
+    #[namespace = "nix"]
+    #[repr(i32)]
+    enum ExperimentalFeature {
+        CaDerivations,
+        ImpureDerivations,
+        Flakes,
+        NixCommand,
+        RecursiveNix,
+        NoUrlLiterals,
+        FetchClosure,
+    }
+
     struct InternalPathInfo {
         drv: String,
         narhash: String,
@@ -37,6 +49,8 @@ mod ffi {
 
     unsafe extern "C++" {
         include!("libnixstore/include/nix.h");
+        #[namespace = "::nix"]
+        type ExperimentalFeature;
 
         // bindings that are also available in the perl bindings
         fn init();
@@ -83,6 +97,7 @@ mod ffi {
             callback: unsafe extern "C" fn(data: &[u8], user_data: usize) -> bool,
             user_data: usize,
         );
+        fn is_experimental_feature_enabled(feature: ExperimentalFeature) -> bool;
     }
 }
 
@@ -93,6 +108,8 @@ fn string_to_opt(v: String) -> Option<String> {
         Some(v)
     }
 }
+
+pub use ffi::ExperimentalFeature;
 
 pub struct PathInfo {
     /// The deriver of this path, if one exists.
@@ -375,6 +392,13 @@ pub fn get_bin_dir() -> String {
 /// Returns the path to the directory where nix store sources and derived files.
 pub fn get_store_dir() -> String {
     ffi::get_store_dir()
+}
+
+#[inline]
+#[must_use]
+/// Returns whether a experimental feature is enabled.
+pub fn is_experimental_feature_enabled(feature: ExperimentalFeature) -> bool {
+    ffi::is_experimental_feature_enabled(feature)
 }
 
 #[inline]

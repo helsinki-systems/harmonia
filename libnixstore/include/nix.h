@@ -1,5 +1,16 @@
 #pragma once
 
+#include <nix/config.h>
+#include <nix/derivations.hh>
+#include <nix/globals.hh>
+#include <nix/store-api.hh>
+#include <nix/log-store.hh>
+#include <nix/content-address.hh>
+#include <nix/util.hh>
+#include <nix/crypto.hh>
+#include <nix/nar-accessor.hh>
+#include <nix/json.hh>
+
 #include "rust/cxx.h"
 #include "libnixstore/src/lib.rs.h"
 
@@ -41,5 +52,5 @@ void dump_path(
     rust::Str store_part,
     rust::Fn<bool(rust::Slice<const uint8_t>, long unsigned int)> callback,
     size_t userdata);
-
+bool is_experimental_feature_enabled(nix::ExperimentalFeature feature_name);
 } // namespace libnixstore
