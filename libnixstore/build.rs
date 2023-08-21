@@ -13,5 +13,6 @@ fn main() {
     println!("cargo:rerun-if-changed=src/lib.rs");
 
     pkg_config::probe_library("nix-store").unwrap();
+    pkg_config::probe_library("nix-main").unwrap();
     pkg_config::probe_library("libsodium").unwrap();
 }

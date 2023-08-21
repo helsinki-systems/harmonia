@@ -336,7 +336,8 @@ async fn get_nar_list(hash: web::Path<String>) -> Result<HttpResponse, Box<dyn E
     let store_path = some_or_404!(nixhash(&hash));
     Ok(HttpResponse::Ok()
         .insert_header(cache_control_max_age_1y())
-        .json(libnixstore::get_nar_list(&store_path)?))
+        .insert_header(http::header::ContentType(mime::APPLICATION_JSON))
+        .body(libnixstore::get_nar_list(&store_path)?))
 }
 
 async fn index(config: web::Data<Config>) -> Result<HttpResponse, Box<dyn Error>> {
@@ -518,6 +519,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(config_data.clone())
             .route("/", web::get().to(index))
             .route("/{hash}.ls", web::get().to(get_nar_list))
+            .route("/{hash}.ls", web::head().to(get_nar_list))
             .route("/{hash}.narinfo", web::get().to(get_narinfo))
             .route("/{hash}.narinfo", web::head().to(get_narinfo))
             .route("/nar/{hash}.nar", web::get().to(stream_nar))
